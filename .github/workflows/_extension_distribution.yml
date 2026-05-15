@@ -403,6 +403,11 @@ jobs:
           CCACHE_NOHASHDIR=1
           CCACHE_SLOPPINESS=time_macros,include_file_mtime,pch_defines
           CCACHE_COMPILERCHECK=content
+          # Haybarn: remote ccache backend (Cloudflare Worker fronting R2,
+          # same bucket/auth as the vcpkg cache). Reads anonymous, writes
+          # use Bearer token. Local cache stays L1, R2 is L2 (shared across
+          # repos + branches + runners — survives GH cache flakiness).
+          CCACHE_REMOTE_STORAGE=https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache|bearer-token=${{ secrets.vcpkg_token }}|connect-timeout=10000|operation-timeout=30000
           SUBSET_EXTENSIONS_TESTS=${{ inputs.extensions_test_selection }}
           EOF
           echo '${{ inputs.test_config }}'| jq -r '.test_env_variables // {} | to_entries | map("\(.key)=\(.value)")|.[]' >> docker_env.txt
@@ -552,6 +557,10 @@ jobs:
       CCACHE_NOHASHDIR: "1"
       CCACHE_SLOPPINESS: "time_macros,include_file_mtime,pch_defines"
       CCACHE_COMPILERCHECK: "content"
+      # Remote ccache via Cloudflare Worker → R2 (same bucket/auth as vcpkg).
+      # Local cache stays L1; R2 is L2 shared across repos/runners/branches —
+      # survives GH cache flakiness + outlives any single repo's cache scope.
+      CCACHE_REMOTE_STORAGE: "https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache|bearer-token=${{ secrets.vcpkg_token }}|connect-timeout=10000|operation-timeout=30000"
 
     steps:
       - uses: actions/checkout@v6
@@ -1113,6 +1122,8 @@ jobs:
       CCACHE_NOHASHDIR: "1"
       CCACHE_SLOPPINESS: "time_macros,include_file_mtime,pch_defines"
       CCACHE_COMPILERCHECK: "content"
+      # Remote ccache via Cloudflare Worker → R2. See macos block for rationale.
+      CCACHE_REMOTE_STORAGE: "https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache|bearer-token=${{ secrets.vcpkg_token }}|connect-timeout=10000|operation-timeout=30000"
 
     steps:
       - uses: actions/checkout@v6

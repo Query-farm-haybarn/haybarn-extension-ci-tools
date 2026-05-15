@@ -831,6 +831,21 @@ jobs:
       CC: ${{ (matrix.duckdb_arch == 'windows_amd64_rtools' || matrix.duckdb_arch == 'windows_amd64_mingw') && 'gcc' || 'cl' }}
       CXX: ${{ (matrix.duckdb_arch == 'windows_amd64_rtools' || matrix.duckdb_arch == 'windows_amd64_mingw') && 'g++' || 'cl' }}
       GEN: ninja
+      # Haybarn: ccache tuning + remote backend for Windows. CMAKE_*_COMPILER_LAUNCHER
+      # only works with non-MSBuild generators — GEN=ninja above satisfies that.
+      # ccache 4.6+ supports MSVC; chocolatey ships a recent version. ccache-action
+      # below installs it and sets CCACHE_DIR; the remaining env knobs match Linux/macOS.
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_NOHASHDIR: "1"
+      CCACHE_SLOPPINESS: "time_macros,include_file_mtime,pch_defines"
+      CCACHE_COMPILERCHECK: "content"
+      # NOTE: CCACHE_COMPILERTYPE intentionally NOT set here — the matrix
+      # spans both cl.exe (windows_amd64) and gcc/g++ (windows_amd64_mingw,
+      # windows_amd64_rtools); ccache's auto-detect handles both correctly.
+      CCACHE_REMOTE_STORAGE: "http://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache|bearer-token=${{ secrets.vcpkg_token }}|connect-timeout=10000|operation-timeout=30000"
+      # Pass `-DCMAKE_*_COMPILER_LAUNCHER=ccache` through the duckdb Makefile so
+      # cmake wraps the compiler. The Makefile honors COMMON_CMAKE_VARS env.
+      COMMON_CMAKE_VARS: "-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
 
     steps:
       - name: Downgrade AWS cli

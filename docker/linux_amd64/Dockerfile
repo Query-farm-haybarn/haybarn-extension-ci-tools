@@ -1,4 +1,4 @@
-FROM quay.io/pypa/manylinux_2_28_x86_64:2024.10.07-1
+FROM quay.io/pypa/manylinux_2_28_x86_64:2026.05.13-1
 
 # Setup the basic necessities
 RUN yum groupinstall -y "Development Tools"

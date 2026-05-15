@@ -20,6 +20,10 @@ on:
         required: false
       VCPKG_CACHING_AWS_DEFAULT_REGION:
         required: false
+      # Haybarn fork: optional bearer token. When `vcpkg_binary_sources` contains
+      # the `{0}` placeholder, it is substituted with this secret at job-start.
+      vcpkg_token:
+        required: false
     inputs:
       # The name with which the extension will be built
       extension_name:
@@ -178,7 +182,7 @@ on:
         default: 'regular'
 
 env:
-  VCPKG_BINARY_SOURCES: ${{inputs.vcpkg_binary_sources == '' && 'clear;http,https://vcpkg-cache.duckdb.org,read' || inputs.vcpkg_binary_sources }}
+  VCPKG_BINARY_SOURCES: ${{ inputs.vcpkg_binary_sources == '' && 'clear;http,https://vcpkg-cache.duckdb.org,read' || format(inputs.vcpkg_binary_sources, secrets.vcpkg_token) }}
 
 jobs:
   generate_matrix:

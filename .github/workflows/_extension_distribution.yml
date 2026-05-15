@@ -394,6 +394,15 @@ jobs:
           LINUX_CI_IN_DOCKER=1
           CCACHE_MAXSIZE=1G
           CCACHE_NOCOMPRESS=1
+          # Haybarn: strip absolute workspace prefix from ccache hashes so
+          # vcpkg's per-run buildtrees temp paths don't bust the cache, and
+          # let __DATE__/__TIME__/header-mtime variance through. The
+          # /duckdb_build_dir path is the volume mount target inside the
+          # manylinux container.
+          CCACHE_BASEDIR=/duckdb_build_dir
+          CCACHE_NOHASHDIR=1
+          CCACHE_SLOPPINESS=time_macros,include_file_mtime,pch_defines
+          CCACHE_COMPILERCHECK=content
           SUBSET_EXTENSIONS_TESTS=${{ inputs.extensions_test_selection }}
           EOF
           echo '${{ inputs.test_config }}'| jq -r '.test_env_variables // {} | to_entries | map("\(.key)=\(.value)")|.[]' >> docker_env.txt
@@ -534,6 +543,15 @@ jobs:
       GEN: ninja
       BUILD_SHELL: ${{ inputs.build_duckdb_shell && '1' || '0' }}
       DUCKDB_PLATFORM: ${{ matrix.duckdb_arch }}
+      # Haybarn: ccache tuning — strip absolute workspace prefix from hashes
+      # (so vcpkg's per-run buildtrees temp paths and per-run cwd shifts don't
+      # bust the cache), tolerate __DATE__/__TIME__/header-mtime variance, and
+      # hash the compiler binary content (survives toolchain reinstalls of
+      # the same version).
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_NOHASHDIR: "1"
+      CCACHE_SLOPPINESS: "time_macros,include_file_mtime,pch_defines"
+      CCACHE_COMPILERCHECK: "content"
 
     steps:
       - uses: actions/checkout@v6
@@ -1088,6 +1106,13 @@ jobs:
 
       DUCKDB_PLATFORM: ${{ matrix.duckdb_arch }}
       WASM_EXTENSIONS: 1
+      # Haybarn: ccache tuning — see same block on the macos job. The wasm
+      # builds were getting ~22% hit rate; vcpkg's buildtrees temp paths +
+      # __DATE__/__TIME__ macros in version stamps were the suspects.
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_NOHASHDIR: "1"
+      CCACHE_SLOPPINESS: "time_macros,include_file_mtime,pch_defines"
+      CCACHE_COMPILERCHECK: "content"
 
     steps:
       - uses: actions/checkout@v6

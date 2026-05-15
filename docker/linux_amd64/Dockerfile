@@ -9,16 +9,16 @@ RUN yum install -y perl-core
 # Haybarn: ccache lives in EPEL, not the manylinux_2_28 base repos.
 RUN yum install -y epel-release
 # Haybarn: EPEL 8 still ships ccache 3.7.7 (2019), which predates the HTTP
-# storage backend (added in 4.7) — CCACHE_REMOTE_STORAGE is silently dropped,
-# along with half the tuning env vars (NOHASHDIR, modern SLOPPINESS values).
-# Replace with the upstream GitHub release binary, pinned by version. The
-# 3.7 RPM is intentionally not installed at all (avoids PATH ambiguity).
+# storage backend (added in 4.7). Pull the upstream 4.13.6 GitHub release.
+# Using the `musl-static` variant (fully statically linked, no libc dep at
+# all) rather than `glibc` because manylinux_2_28 has glibc 2.28 while ccache's
+# glibc-tarball requires GLIBC_2.34+. musl-static runs on any Linux.
 ARG CCACHE_VERSION=4.13.6
-RUN curl -fsSL "https://github.com/ccache/ccache/releases/download/v${CCACHE_VERSION}/ccache-${CCACHE_VERSION}-linux-x86_64-glibc.tar.xz" \
+RUN curl -fsSL "https://github.com/ccache/ccache/releases/download/v${CCACHE_VERSION}/ccache-${CCACHE_VERSION}-linux-x86_64-musl-static.tar.xz" \
       -o /tmp/ccache.tar.xz \
     && tar -xJf /tmp/ccache.tar.xz -C /tmp \
-    && install -m 0755 "/tmp/ccache-${CCACHE_VERSION}-linux-x86_64-glibc/ccache" /usr/local/bin/ccache \
-    && rm -rf /tmp/ccache.tar.xz "/tmp/ccache-${CCACHE_VERSION}-linux-x86_64-glibc" \
+    && install -m 0755 "/tmp/ccache-${CCACHE_VERSION}-linux-x86_64-musl-static/ccache" /usr/local/bin/ccache \
+    && rm -rf /tmp/ccache.tar.xz "/tmp/ccache-${CCACHE_VERSION}-linux-x86_64-musl-static" \
     && /usr/local/bin/ccache --version
 RUN yum install -y java-11-openjdk-devel maven
 RUN yum install -y wget

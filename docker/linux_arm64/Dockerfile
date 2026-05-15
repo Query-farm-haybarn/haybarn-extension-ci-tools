@@ -6,6 +6,8 @@ RUN yum install -y curl zip unzip tar autoconf libtool
 RUN yum install -y ninja-build
 RUN yum install -y perl-IPC-Cmd
 RUN yum install -y perl-core
+# Haybarn: ccache lives in EPEL, not the manylinux_2_28 base repos.
+RUN yum install -y epel-release
 RUN yum install -y ccache
 RUN yum install -y java-11-openjdk-devel maven
 RUN yum install -y wget

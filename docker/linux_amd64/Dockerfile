@@ -8,7 +8,18 @@ RUN yum install -y perl-IPC-Cmd
 RUN yum install -y perl-core
 # Haybarn: ccache lives in EPEL, not the manylinux_2_28 base repos.
 RUN yum install -y epel-release
-RUN yum install -y ccache
+# Haybarn: EPEL 8 still ships ccache 3.7.7 (2019), which predates the HTTP
+# storage backend (added in 4.7) — CCACHE_REMOTE_STORAGE is silently dropped,
+# along with half the tuning env vars (NOHASHDIR, modern SLOPPINESS values).
+# Replace with the upstream GitHub release binary, pinned by version. The
+# 3.7 RPM is intentionally not installed at all (avoids PATH ambiguity).
+ARG CCACHE_VERSION=4.13.6
+RUN curl -fsSL "https://github.com/ccache/ccache/releases/download/v${CCACHE_VERSION}/ccache-${CCACHE_VERSION}-linux-x86_64-glibc.tar.xz" \
+      -o /tmp/ccache.tar.xz \
+    && tar -xJf /tmp/ccache.tar.xz -C /tmp \
+    && install -m 0755 "/tmp/ccache-${CCACHE_VERSION}-linux-x86_64-glibc/ccache" /usr/local/bin/ccache \
+    && rm -rf /tmp/ccache.tar.xz "/tmp/ccache-${CCACHE_VERSION}-linux-x86_64-glibc" \
+    && /usr/local/bin/ccache --version
 RUN yum install -y java-11-openjdk-devel maven
 RUN yum install -y wget
 RUN yum install -y kernel-headers

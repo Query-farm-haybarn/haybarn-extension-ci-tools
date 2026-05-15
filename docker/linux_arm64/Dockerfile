@@ -8,7 +8,15 @@ RUN yum install -y perl-IPC-Cmd
 RUN yum install -y perl-core
 # Haybarn: ccache lives in EPEL, not the manylinux_2_28 base repos.
 RUN yum install -y epel-release
-RUN yum install -y ccache
+# Haybarn: see the linux_amd64 Dockerfile — EPEL 8's ccache (3.7.7) is too old
+# for the HTTP storage backend. Pull the upstream GitHub release binary.
+ARG CCACHE_VERSION=4.13.6
+RUN curl -fsSL "https://github.com/ccache/ccache/releases/download/v${CCACHE_VERSION}/ccache-${CCACHE_VERSION}-linux-aarch64-glibc.tar.xz" \
+      -o /tmp/ccache.tar.xz \
+    && tar -xJf /tmp/ccache.tar.xz -C /tmp \
+    && install -m 0755 "/tmp/ccache-${CCACHE_VERSION}-linux-aarch64-glibc/ccache" /usr/local/bin/ccache \
+    && rm -rf /tmp/ccache.tar.xz "/tmp/ccache-${CCACHE_VERSION}-linux-aarch64-glibc" \
+    && /usr/local/bin/ccache --version
 RUN yum install -y java-11-openjdk-devel maven
 RUN yum install -y wget
 RUN yum install -y kernel-headers

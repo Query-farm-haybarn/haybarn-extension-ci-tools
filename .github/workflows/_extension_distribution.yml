@@ -355,7 +355,7 @@ jobs:
           repository: ${{ inputs.override_repository }}
           ref: ${{ inputs.override_ref }}
           fetch-depth: 0
-          submodules: false   # Haybarn: extension-template's submodules are overwritten downstream by override checkouts; skip the redundant initial clone.
+          submodules: recursive   # Haybarn: many real community extensions (h3, scrooge, etc.) have submodules that are load-bearing for the build (CMakeLists.txt does `add_subdirectory(<submodule>)`). The old `submodules: false` optimization was safe for the canonical extension-template (no real submodules) but failed for real extensions: e.g. h3's CMakeLists does `add_subdirectory(h3)` against an h3-library submodule. Recursive is slower per leg but correct in the general case.
 
       - uses: actions/checkout@v6
         name: Checkout current repository
@@ -654,7 +654,7 @@ jobs:
           repository: ${{ inputs.override_repository }}
           ref: ${{ inputs.override_ref }}
           fetch-depth: 0
-          submodules: false   # Haybarn: extension-template's submodules are overwritten downstream by override checkouts; skip the redundant initial clone.
+          submodules: recursive   # Haybarn: many real community extensions (h3, scrooge, etc.) have submodules that are load-bearing for the build (CMakeLists.txt does `add_subdirectory(<submodule>)`). The old `submodules: false` optimization was safe for the canonical extension-template (no real submodules) but failed for real extensions: e.g. h3's CMakeLists does `add_subdirectory(h3)` against an h3-library submodule. Recursive is slower per leg but correct in the general case.
 
       - uses: actions/checkout@v6
         name: Checkout current repository
@@ -959,7 +959,7 @@ jobs:
           repository: ${{ inputs.override_repository }}
           ref: ${{ inputs.override_ref }}
           fetch-depth: 0
-          submodules: false   # Haybarn: extension-template's submodules are overwritten downstream by override checkouts; skip the redundant initial clone.
+          submodules: recursive   # Haybarn: many real community extensions (h3, scrooge, etc.) have submodules that are load-bearing for the build (CMakeLists.txt does `add_subdirectory(<submodule>)`). The old `submodules: false` optimization was safe for the canonical extension-template (no real submodules) but failed for real extensions: e.g. h3's CMakeLists does `add_subdirectory(h3)` against an h3-library submodule. Recursive is slower per leg but correct in the general case.
 
       - uses: actions/checkout@v6
         name: Checkout current repository
@@ -1254,7 +1254,7 @@ jobs:
           repository: ${{ inputs.override_repository }}
           ref: ${{ inputs.override_ref }}
           fetch-depth: 0
-          submodules: false   # Haybarn: extension-template's submodules are overwritten downstream by override checkouts; skip the redundant initial clone.
+          submodules: recursive   # Haybarn: many real community extensions (h3, scrooge, etc.) have submodules that are load-bearing for the build (CMakeLists.txt does `add_subdirectory(<submodule>)`). The old `submodules: false` optimization was safe for the canonical extension-template (no real submodules) but failed for real extensions: e.g. h3's CMakeLists does `add_subdirectory(h3)` against an h3-library submodule. Recursive is slower per leg but correct in the general case.
 
       - uses: actions/checkout@v6
         name: Checkout current repository

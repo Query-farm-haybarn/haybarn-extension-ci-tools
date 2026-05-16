@@ -543,6 +543,16 @@ jobs:
         run: |
           docker run --env-file=docker_env.txt -v `pwd`:/duckdb_build_dir -v `pwd`/ccache_dir:/ccache_dir duckdb/${{ matrix.duckdb_arch }} make ${{ inputs.build_type }}
 
+      # Haybarn: ccache stats live inside the container. Surface them to the
+      # host log so we can monitor hit rates per leg (the same `ccache -s`
+      # output that macOS/Windows/wasm legs print). Best-effort — failure
+      # here shouldn't fail the build.
+      - name: ccache stats (inside Docker)
+        if: ${{ always() }}
+        continue-on-error: true
+        run: |
+          docker run --env-file=docker_env.txt -v `pwd`/ccache_dir:/ccache_dir duckdb/${{ matrix.duckdb_arch }} ccache -s -v || true
+
       # Haybarn: actions/cache/save dropped along with the corresponding
       # restore step above — R2 carries all ccache.
       - name: Test extension (inside docker)
@@ -1231,10 +1241,15 @@ jobs:
 
       DUCKDB_PLATFORM: ${{ matrix.duckdb_arch }}
       WASM_EXTENSIONS: 1
-      # Haybarn: ccache tuning — see same block on the macos job. The wasm
-      # builds were getting ~22% hit rate; vcpkg's buildtrees temp paths +
-      # __DATE__/__TIME__ macros in version stamps were the suspects.
-      CCACHE_BASEDIR: ${{ github.workspace }}
+      # Haybarn: CCACHE_BASEDIR is /home/runner (not ${{ github.workspace }}),
+      # widened to cover the emsdk install path. `mymindstorm/setup-emsdk@v13`
+      # installs to `/home/runner/work/_temp/<random UUID>/emsdk-main/`, where
+      # the UUID changes every run. emcc invocations therefore have a unique
+      # absolute path each time, defeating ccache's content-hash unless the
+      # basedir normalizes it. Widening to /home/runner strips the variable
+      # part of the path and lets cache keys repeat across runs.
+      # See https://ccache.dev/manual/4.13.html#_compiling_in_different_directories.
+      CCACHE_BASEDIR: /home/runner
       CCACHE_NOHASHDIR: "1"
       CCACHE_SLOPPINESS: "time_macros,include_file_mtime,pch_defines"
       CCACHE_COMPILERCHECK: "content"

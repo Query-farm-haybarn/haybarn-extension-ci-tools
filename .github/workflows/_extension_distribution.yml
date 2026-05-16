@@ -1532,34 +1532,37 @@ jobs:
         if: ${{ inputs.use_prebuilt_wasm_image && always() }}
         continue-on-error: true
         shell: bash
+        # `set +e` so one failing diagnostic doesn't abort the rest.
         run: |
-          echo "=== ccache --print-config (with token masked) ==="
+          set +e
+          echo "=== ccache --show-config (with token masked) ==="
           docker run --env-file=docker_env.txt \
             -v "$PWD"/ccache_dir:/ccache_dir \
             "${{ steps.wasm_image.outputs.ref }}" \
-            ccache --print-config 2>&1 | sed -E 's/bearer-token=[^|]+/bearer-token=***/'
+            ccache --show-config 2>&1 | sed -E 's/bearer-token=[^|]+/bearer-token=***/'
+
           echo ""
           echo "=== ccache -s -v ==="
           docker run --env-file=docker_env.txt \
             -v "$PWD"/ccache_dir:/ccache_dir \
             "${{ steps.wasm_image.outputs.ref }}" \
-            ccache -s -v || true
+            ccache -s -v
+
           echo ""
-          echo "=== Remote-storage operations from CCACHE_DEBUG logs ==="
-          # Grep one debug log file for remote storage ops. The .ccache-log
-          # files have one section per compile; we just need to see if
-          # remote PUTs are getting non-2xx responses (or not happening
-          # at all).
+          echo "=== ccache_debug dir contents ==="
+          ls -la "$PWD/ccache_debug" 2>&1 | head -10 || echo "(no ccache_debug dir)"
+          # Count files; pick a sample log; grep for remote-storage ops.
           if [ -d "$PWD/ccache_debug" ]; then
+            count=$(find "$PWD/ccache_debug" -name '*.ccache-log' | wc -l)
+            echo "Debug log count: $count"
             sample=$(find "$PWD/ccache_debug" -name '*.ccache-log' -print -quit)
             if [ -n "$sample" ]; then
-              echo "Sampling: $sample"
-              grep -iE "remote|http|secondary|put|fail|error" "$sample" | head -40
-            else
-              echo "(no debug logs produced — CCACHE_DEBUG likely not honored)"
+              echo ""
+              echo "=== sampled debug log: $sample ==="
+              grep -iE "remote|http|secondary|put|fail|error|401|403|404|500|conf" "$sample" \
+                | sed -E 's/bearer-token=[^|]+/bearer-token=***/' \
+                | head -40
             fi
-          else
-            echo "(ccache_debug dir not created)"
           fi
 
       - name: Upload ccache debug logs (wasm Docker path)

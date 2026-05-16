@@ -1421,14 +1421,8 @@ jobs:
           # bakes CCACHE_BASEDIR=/duckdb_build_dir + tuning defaults; only
           # CCACHE_REMOTE_STORAGE needs propagation here because the bearer
           # token has to land at runtime, not build time.
-          # CCACHE_DEBUG=1 is on temporarily to diagnose why wasm legs show
-          # 0% remote hits even though vcpkg writes through the same Worker
-          # + token work fine on the Linux legs. The debug output goes to
-          # /duckdb_build_dir/ccache_debug/ which we archive after the build.
           cat > docker_env.txt <<EOF
           CCACHE_REMOTE_STORAGE=http://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache|bearer-token=${{ secrets.vcpkg_token }}|connect-timeout=10000|operation-timeout=30000
-          CCACHE_DEBUG=1
-          CCACHE_DEBUGDIR=/duckdb_build_dir/ccache_debug
           DUCKDB_PLATFORM=${{ matrix.duckdb_arch }}
           DUCKDB_GIT_VERSION=${{ inputs.duckdb_version }}
           EXTENSION_NAME=${{ inputs.extension_name }}
@@ -1439,13 +1433,6 @@ jobs:
           SUBSET_EXTENSIONS_TESTS=${{ inputs.extensions_test_selection }}
           EOF
           echo '${{ inputs.test_config }}' | jq -r '.test_env_variables // {} | to_entries | map("\(.key)=\(.value)") | .[]' >> docker_env.txt
-
-          # Show what ccache actually parses from the env (with bearer-token
-          # masked). Helps catch malformed URLs (bash $X expansion in heredoc,
-          # bad chars in token, etc.) — common silent-fail mode for remote
-          # backends.
-          echo "=== docker_env.txt (masked) ==="
-          sed -E 's/bearer-token=[^|]+/bearer-token=***/' docker_env.txt
 
       - name: Downgrade AWS cli
         if: ${{ (contains(format(';{0};', inputs.extra_toolchains), ';downgraded_aws_cli;')) }}
@@ -1532,48 +1519,11 @@ jobs:
         if: ${{ inputs.use_prebuilt_wasm_image && always() }}
         continue-on-error: true
         shell: bash
-        # `set +e` so one failing diagnostic doesn't abort the rest.
         run: |
-          set +e
-          echo "=== ccache --show-config (with token masked) ==="
           docker run --env-file=docker_env.txt \
             -v "$PWD"/ccache_dir:/ccache_dir \
             "${{ steps.wasm_image.outputs.ref }}" \
-            ccache --show-config 2>&1 | sed -E 's/bearer-token=[^|]+/bearer-token=***/'
-
-          echo ""
-          echo "=== ccache -s -v ==="
-          docker run --env-file=docker_env.txt \
-            -v "$PWD"/ccache_dir:/ccache_dir \
-            "${{ steps.wasm_image.outputs.ref }}" \
-            ccache -s -v
-
-          echo ""
-          echo "=== ccache_debug dir contents ==="
-          ls -la "$PWD/ccache_debug" 2>&1 | head -10 || echo "(no ccache_debug dir)"
-          # Count files; pick a sample log; grep for remote-storage ops.
-          if [ -d "$PWD/ccache_debug" ]; then
-            count=$(find "$PWD/ccache_debug" -name '*.ccache-log' | wc -l)
-            echo "Debug log count: $count"
-            sample=$(find "$PWD/ccache_debug" -name '*.ccache-log' -print -quit)
-            if [ -n "$sample" ]; then
-              echo ""
-              echo "=== sampled debug log: $sample ==="
-              grep -iE "remote|http|secondary|put|fail|error|401|403|404|500|conf" "$sample" \
-                | sed -E 's/bearer-token=[^|]+/bearer-token=***/' \
-                | head -40
-            fi
-          fi
-
-      - name: Upload ccache debug logs (wasm Docker path)
-        if: ${{ inputs.use_prebuilt_wasm_image && always() }}
-        continue-on-error: true
-        uses: actions/upload-artifact@v7
-        with:
-          name: ccache-debug-${{ matrix.duckdb_arch }}-${{ github.run_id }}
-          path: ccache_debug/
-          if-no-files-found: warn
-          retention-days: 3
+            ccache -s -v || true
 
       - uses: actions/upload-artifact@v7
         if: ${{ !inputs.upload_all_extensions }}

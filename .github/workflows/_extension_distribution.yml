@@ -1314,6 +1314,24 @@ jobs:
           restore-keys: ccache-extension-distribution-${{ matrix.duckdb_arch }}-
           save: ${{ inputs.save_cache }}
 
+      - name: Upgrade ccache to 4.13.6 (HTTP backend bearer auth fix)
+        # hendrikmuhs/ccache-action installs ccache from apt — ubuntu-latest
+        # ships 4.9.1 in apt as of 2026-05, whose HTTP storage backend has
+        # buggy bearer-token write handling: writes silently fail and the
+        # remote cache never populates → 100% remote miss on every wasm
+        # build, forever. 4.13.6 (matching the manylinux container build)
+        # fixes the auth flow. Drop /usr/local/bin/ccache on top of whatever
+        # ccache-action installed — that binary takes precedence in PATH.
+        shell: bash
+        run: |
+          curl -fsSL "https://github.com/ccache/ccache/releases/download/v4.13.6/ccache-4.13.6-linux-x86_64-musl-static.tar.xz" \
+            -o /tmp/ccache.tar.xz
+          tar -xJf /tmp/ccache.tar.xz -C /tmp
+          sudo install -m 0755 "/tmp/ccache-4.13.6-linux-x86_64-musl-static/ccache" /usr/local/bin/ccache
+          rm -rf /tmp/ccache.tar.xz "/tmp/ccache-4.13.6-linux-x86_64-musl-static"
+          ccache --version
+          which ccache
+
       - name: Downgrade AWS cli
         if: ${{ (contains(format(';{0};', inputs.extra_toolchains), ';downgraded_aws_cli;')) }}
         run: |

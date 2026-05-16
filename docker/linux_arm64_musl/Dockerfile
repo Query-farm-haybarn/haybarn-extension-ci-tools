@@ -14,7 +14,19 @@ LABEL org.opencontainers.image.licenses="MIT"
 
 # Setup the basic necessities
 RUN apk update -q
-RUN apk add -qq ccache cmake git clang19 gcc libssl3 wget bash zip gettext unzip build-base curl make libffi-dev zlib openssh autoconf linux-headers libunwind-dev jq libtool tzdata-utils
+RUN apk add -qq cmake git clang19 gcc libssl3 wget bash zip gettext unzip build-base curl make libffi-dev zlib openssh autoconf linux-headers libunwind-dev jq libtool tzdata-utils
+
+# Haybarn: Alpine's apk ships ccache 4.11.3 which still has the bearer-auth
+# HTTP backend issues we saw in 4.9.1 — writes to the R2 cache silently
+# fail. Install 4.13.6 statically from upstream, matching the non-musl
+# images. aarch64-musl-static build is published by upstream.
+ARG CCACHE_VERSION=4.13.6
+RUN curl -fsSL "https://github.com/ccache/ccache/releases/download/v${CCACHE_VERSION}/ccache-${CCACHE_VERSION}-linux-aarch64-musl-static.tar.xz" \
+      -o /tmp/ccache.tar.xz \
+    && tar -xJf /tmp/ccache.tar.xz -C /tmp \
+    && install -m 0755 "/tmp/ccache-${CCACHE_VERSION}-linux-aarch64-musl-static/ccache" /usr/local/bin/ccache \
+    && rm -rf /tmp/ccache.tar.xz "/tmp/ccache-${CCACHE_VERSION}-linux-aarch64-musl-static" \
+    && /usr/local/bin/ccache --version
 RUN curl --no-progress-meter -LO https://dl-cdn.alpinelinux.org/alpine/v3.21/community/aarch64/aws-cli-2.22.10-r0.apk
 RUN apk add --allow-untrusted aws-cli-2.22.10-r0.apk
 RUN curl --no-progress-meter -LO https://dl-cdn.alpinelinux.org/alpine/v3.23/community/aarch64/ninja-build-1.13.2-r0.apk

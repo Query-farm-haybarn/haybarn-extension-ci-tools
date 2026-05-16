@@ -496,25 +496,15 @@ jobs:
           EOF
           echo '${{ inputs.test_config }}'| jq -r '.test_env_variables // {} | to_entries | map("\(.key)=\(.value)")|.[]' >> docker_env.txt
 
-      - name: Generate timestamp for Ccache entry
-        shell: cmake -P {0}
-        id: ccache_timestamp
-        run: |
-          string(TIMESTAMP current_date "%Y-%m-%d-%H;%M;%S" UTC)
-          message("::set-output name=timestamp::${current_date}")
-
+      # Haybarn: dropped the actions/cache restore/save pair. Empirically the
+      # L1 GH cache was thrashing under high-churn parallel community-extension
+      # builds (10 GB per-repo cap, LRU evicted entries before next build).
+      # Restore step routinely reported "Cache not found for input keys". R2
+      # is now the only ccache backend — slower than warm L1 but actually
+      # consistent across runs. See haybarn-status snapshot 2026-05-16.
       - name: Create Ccache directory
         run: |
           mkdir ccache_dir
-
-      - name: Load Ccache
-        uses: actions/cache/restore@v5
-        with:
-          path: ./ccache_dir
-          key: ccache-extension-distribution-${{ matrix.duckdb_arch }}-${{ inputs.duckdb_version }}-${{ steps.ccache_timestamp.outputs.timestamp }}
-          restore-keys: |
-            ccache-extension-distribution-${{ matrix.duckdb_arch }}-${{ inputs.duckdb_version }}
-            ccache-extension-distribution-${{ matrix.duckdb_arch }}-
 
       - name: Run configure (outside Docker)
         shell: bash
@@ -553,13 +543,8 @@ jobs:
         run: |
           docker run --env-file=docker_env.txt -v `pwd`:/duckdb_build_dir -v `pwd`/ccache_dir:/ccache_dir duckdb/${{ matrix.duckdb_arch }} make ${{ inputs.build_type }}
 
-      - name: Save Ccache
-        if: ${{ inputs.save_cache }}
-        uses: actions/cache/save@v5
-        with:
-          path: ./ccache_dir
-          key: ccache-extension-distribution-${{ matrix.duckdb_arch }}-${{ inputs.duckdb_version }}-${{ steps.ccache_timestamp.outputs.timestamp }}
-
+      # Haybarn: actions/cache/save dropped along with the corresponding
+      # restore step above — R2 carries all ccache.
       - name: Test extension (inside docker)
         if: ${{ matrix.duckdb_arch != 'linux_arm64' && inputs.skip_tests == false }}
         run: |
@@ -697,7 +682,12 @@ jobs:
         with:
           key: ccache-extension-distribution-${{ matrix.duckdb_arch }}-${{ inputs.duckdb_version }}
           restore-keys: ccache-extension-distribution-${{ matrix.duckdb_arch }}-
-          save: ${{ inputs.save_cache }}
+          # Haybarn: GH cache disabled — empirically thrashed under high-churn
+          # parallel community ext builds (10GB cap, LRU eviction). R2 is the
+          # only ccache backend now. The action is still useful for installing
+          # the ccache binary and setting CCACHE_DIR, just not for L1 cache.
+          save: 'false'
+          read-only: 'true'
 
       - uses: actions/setup-python@v6
         with:
@@ -1007,7 +997,12 @@ jobs:
         with:
           key: ccache-extension-distribution-${{ matrix.duckdb_arch }}-${{ inputs.duckdb_version }}
           restore-keys: ccache-extension-distribution-${{ matrix.duckdb_arch }}-
-          save: ${{ inputs.save_cache }}
+          # Haybarn: GH cache disabled — empirically thrashed under high-churn
+          # parallel community ext builds (10GB cap, LRU eviction). R2 is the
+          # only ccache backend now. The action is still useful for installing
+          # the ccache binary and setting CCACHE_DIR, just not for L1 cache.
+          save: 'false'
+          read-only: 'true'
 
       - name: Upgrade ccache to 4.13.6 on Windows (HTTP backend bearer auth fix)
         # Same fix as the wasm leg — `hendrikmuhs/ccache-action` installs
@@ -1334,7 +1329,12 @@ jobs:
         with:
           key: ccache-extension-distribution-${{ matrix.duckdb_arch }}-${{ inputs.duckdb_version }}
           restore-keys: ccache-extension-distribution-${{ matrix.duckdb_arch }}-
-          save: ${{ inputs.save_cache }}
+          # Haybarn: GH cache disabled — empirically thrashed under high-churn
+          # parallel community ext builds (10GB cap, LRU eviction). R2 is the
+          # only ccache backend now. The action is still useful for installing
+          # the ccache binary and setting CCACHE_DIR, just not for L1 cache.
+          save: 'false'
+          read-only: 'true'
 
       - name: Upgrade ccache to 4.13.6 (HTTP backend bearer auth fix)
         # hendrikmuhs/ccache-action installs ccache from apt — ubuntu-latest

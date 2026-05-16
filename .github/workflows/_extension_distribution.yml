@@ -1009,6 +1009,28 @@ jobs:
           restore-keys: ccache-extension-distribution-${{ matrix.duckdb_arch }}-
           save: ${{ inputs.save_cache }}
 
+      - name: Upgrade ccache to 4.13.6 on Windows (HTTP backend bearer auth fix)
+        # Same fix as the wasm leg — `hendrikmuhs/ccache-action` installs
+        # ccache 4.9.1 via chocolatey on windows-latest, whose HTTP backend
+        # silently fails bearer-token PUTs, so the remote cache never warms.
+        # 4.13.6 fixes the auth flow. Drop the upstream-release Windows ccache
+        # binary on top of whatever ccache-action installed; on Windows we put
+        # it in C:\ProgramData\chocolatey\bin so it wins on PATH.
+        # The non-mingw windows runner has cl.exe (MSVC); CCACHE_COMPILERTYPE=msvc
+        # tells ccache 4.6+ to wrap cl.exe natively (already set in the env
+        # block via CIBW or directly by callers).
+        if: ${{ runner.os == 'Windows' }}
+        shell: bash
+        run: |
+          CCACHE_VERSION=4.13.6
+          # Windows-x86_64 build is published by the upstream ccache project.
+          curl -fsSL "https://github.com/ccache/ccache/releases/download/v${CCACHE_VERSION}/ccache-${CCACHE_VERSION}-windows-x86_64.zip" -o /tmp/ccache.zip
+          unzip -j -o /tmp/ccache.zip "ccache-${CCACHE_VERSION}-windows-x86_64/ccache.exe" -d /tmp/
+          # Place ahead of the chocolatey-installed copy on PATH.
+          mv /tmp/ccache.exe "/c/ProgramData/chocolatey/bin/ccache.exe"
+          ccache --version
+          which ccache
+
       - uses: r-lib/actions/setup-r@v2
         if:  matrix.duckdb_arch == 'windows_amd64_rtools' || matrix.duckdb_arch == 'windows_amd64_mingw'
         with:

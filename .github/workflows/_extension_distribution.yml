@@ -214,6 +214,17 @@ on:
         required: false
         type: string
         default: 'query-farm-haybarn'
+      # Haybarn: when true, the wasm leg pulls
+      # ghcr.io/<prebuilt_image_namespace>/haybarn-wasm:<prebuilt_image_tag>
+      # instead of installing emsdk + vcpkg inline. Eliminates the per-run
+      # emsdk download (~300 MB, ~30-60s) AND removes the variable-UUID
+      # emsdk path that defeats ccache hashing — emcc lives at /emsdk/...
+      # in the image. Off by default while we shake out the new path; flip
+      # on per-caller via the workflow input. See docker/wasm/Dockerfile.
+      use_prebuilt_wasm_image:
+        required: false
+        type: boolean
+        default: false
 
 env:
   # Default to the Haybarn vcpkg cache (readwrite, fronted by the
@@ -1308,7 +1319,11 @@ jobs:
         run: |
           DUCKDB_TAG=${{ inputs.duckdb_tag }} make set_duckdb_tag
 
+      # Inline toolchain setup — skipped when use_prebuilt_wasm_image is true
+      # (in that case emsdk + vcpkg + ccache 4.13.6 all come baked in the
+      # ghcr.io/.../haybarn-wasm:<tag> image).
       - uses: mymindstorm/setup-emsdk@v13
+        if: ${{ !inputs.use_prebuilt_wasm_image }}
         with:
           version: 3.1.71
 
@@ -1325,6 +1340,7 @@ jobs:
           go-version: '1.23'
 
       - name: Setup vcpkg
+        if: ${{ !inputs.use_prebuilt_wasm_image }}
         run: |
           mkdir local_vcpkg_installation
           cmake --version
@@ -1339,6 +1355,7 @@ jobs:
           echo "${{ github.workspace }}/local_vcpkg_installation" >> $GITHUB_PATH
 
       - name: Setup Ccache
+        if: ${{ !inputs.use_prebuilt_wasm_image }}
         uses: hendrikmuhs/ccache-action@main
         continue-on-error: true
         with:
@@ -1359,6 +1376,7 @@ jobs:
         # build, forever. 4.13.6 (matching the manylinux container build)
         # fixes the auth flow. Drop /usr/local/bin/ccache on top of whatever
         # ccache-action installed — that binary takes precedence in PATH.
+        if: ${{ !inputs.use_prebuilt_wasm_image }}
         shell: bash
         run: |
           curl -fsSL "https://github.com/ccache/ccache/releases/download/v4.13.6/ccache-4.13.6-linux-x86_64-musl-static.tar.xz" \
@@ -1368,6 +1386,53 @@ jobs:
           rm -rf /tmp/ccache.tar.xz "/tmp/ccache-4.13.6-linux-x86_64-musl-static"
           ccache --version
           which ccache
+
+      # Pre-built wasm image path — pulls one ready-baked image with emsdk,
+      # vcpkg, and ccache 4.13.6 all in place. Skips everything above for
+      # toolchain setup.
+      - name: Pick GHCR wasm image
+        if: ${{ inputs.use_prebuilt_wasm_image }}
+        id: wasm_image
+        shell: bash
+        run: |
+          IMG="ghcr.io/${{ inputs.prebuilt_image_namespace }}/haybarn-wasm:${{ inputs.prebuilt_image_tag }}"
+          echo "ref=${IMG}" >> "$GITHUB_OUTPUT"
+          echo "Selected wasm image: ${IMG}"
+
+      - name: Log in to GHCR (wasm path)
+        if: ${{ inputs.use_prebuilt_wasm_image }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull wasm image
+        if: ${{ inputs.use_prebuilt_wasm_image }}
+        shell: bash
+        run: docker pull "${{ steps.wasm_image.outputs.ref }}"
+
+      - name: Prepare ccache_dir + docker env file (wasm Docker path)
+        if: ${{ inputs.use_prebuilt_wasm_image }}
+        shell: bash
+        run: |
+          mkdir -p ccache_dir
+          # docker_env.txt mirrors the Linux Docker pattern. Image already
+          # bakes CCACHE_BASEDIR=/duckdb_build_dir + tuning defaults; only
+          # CCACHE_REMOTE_STORAGE needs propagation here because the bearer
+          # token has to land at runtime, not build time.
+          cat > docker_env.txt <<EOF
+          CCACHE_REMOTE_STORAGE=http://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache|bearer-token=${{ secrets.vcpkg_token }}|connect-timeout=10000|operation-timeout=30000
+          DUCKDB_PLATFORM=${{ matrix.duckdb_arch }}
+          DUCKDB_GIT_VERSION=${{ inputs.duckdb_version }}
+          EXTENSION_NAME=${{ inputs.extension_name }}
+          EXTENSION_CANONICAL=${{ inputs.extension_canonical }}
+          ENABLE_EXTENSION_AUTOINSTALL=1
+          ENABLE_EXTENSION_AUTOLOADING=1
+          WASM_EXTENSIONS=1
+          SUBSET_EXTENSIONS_TESTS=${{ inputs.extensions_test_selection }}
+          EOF
+          echo '${{ inputs.test_config }}' | jq -r '.test_env_variables // {} | to_entries | map("\(.key)=\(.value)") | .[]' >> docker_env.txt
 
       - name: Downgrade AWS cli
         if: ${{ (contains(format(';{0};', inputs.extra_toolchains), ';downgraded_aws_cli;')) }}
@@ -1387,6 +1452,7 @@ jobs:
           cat ./extension_config.cmake
 
       - name: Run configure
+        if: ${{ !inputs.use_prebuilt_wasm_image }}
         shell: bash
         env:
           DUCKDB_GIT_VERSION: ${{ inputs.duckdb_version }}
@@ -1394,7 +1460,7 @@ jobs:
           make configure_ci
 
       - name: Install extra vcpkg dependencies
-        if: ${{ inputs.vcpkg_extra_dependencies != '' }}
+        if: ${{ inputs.vcpkg_extra_dependencies != '' && !inputs.use_prebuilt_wasm_image }}
         shell: bash
         run: |
           JSON='${{inputs.vcpkg_extra_dependencies}}'
@@ -1406,8 +1472,58 @@ jobs:
           fi
 
       - name: Build Wasm module
+        if: ${{ !inputs.use_prebuilt_wasm_image }}
         run: |
           EXTENSION_NAME=${{ inputs.extension_name }} EXTENSION_CANONICAL=${{ inputs.extension_canonical }} ENABLE_EXTENSION_AUTOINSTALL=1 ENABLE_EXTENSION_AUTOLOADING=1 make ${{ matrix.duckdb_arch }}
+
+      # ----- Docker-based path (use_prebuilt_wasm_image = true) -----
+      # Run configure + extra vcpkg deps + build inside the prebuilt
+      # haybarn-wasm image. The image bakes emsdk, vcpkg, ccache 4.13.6
+      # and emcc lives at a stable /emsdk path so ccache hashes repeat
+      # across runs (no more /home/runner/work/_temp/<UUID> dance).
+      - name: Run configure (inside Docker)
+        if: ${{ inputs.use_prebuilt_wasm_image }}
+        shell: bash
+        run: |
+          docker run --env-file=docker_env.txt \
+            -v "$PWD":/duckdb_build_dir \
+            -v "$PWD"/ccache_dir:/ccache_dir \
+            "${{ steps.wasm_image.outputs.ref }}" \
+            bash -lc 'source /emsdk/emsdk_env.sh > /dev/null && make configure_ci'
+
+      - name: Install extra vcpkg dependencies (inside Docker)
+        if: ${{ inputs.use_prebuilt_wasm_image && inputs.vcpkg_extra_dependencies != '' }}
+        shell: bash
+        run: |
+          JSON='${{ inputs.vcpkg_extra_dependencies }}'
+          DEPS=$(python3 -c "import json; data=json.loads(r'$JSON'); print(' '.join(data.get('${{ matrix.duckdb_arch }}', [])) if '${{ matrix.duckdb_arch }}' in data else '')" | tr -d '\n')
+          if [ -n "$DEPS" ]; then
+            docker run --env-file=docker_env.txt \
+              -v "$PWD":/duckdb_build_dir \
+              -v "$PWD"/ccache_dir:/ccache_dir \
+              "${{ steps.wasm_image.outputs.ref }}" \
+              bash -lc "source /emsdk/emsdk_env.sh > /dev/null && for dep in $DEPS; do vcpkg install \"\$dep\" --recurse; done"
+          fi
+
+      - name: Build Wasm module (inside Docker)
+        if: ${{ inputs.use_prebuilt_wasm_image }}
+        shell: bash
+        run: |
+          docker run --env-file=docker_env.txt \
+            -v "$PWD":/duckdb_build_dir \
+            -v "$PWD"/ccache_dir:/ccache_dir \
+            "${{ steps.wasm_image.outputs.ref }}" \
+            bash -lc 'source /emsdk/emsdk_env.sh > /dev/null && make ${{ matrix.duckdb_arch }}'
+
+      - name: ccache stats (wasm Docker path)
+        if: ${{ inputs.use_prebuilt_wasm_image && always() }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          docker run --env-file=docker_env.txt \
+            -v "$PWD"/ccache_dir:/ccache_dir \
+            "${{ steps.wasm_image.outputs.ref }}" \
+            ccache -s -v || true
 
       - uses: actions/upload-artifact@v7
         if: ${{ !inputs.upload_all_extensions }}

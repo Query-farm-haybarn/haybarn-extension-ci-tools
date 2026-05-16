@@ -173,3 +173,79 @@ jobs:
             -f visibility=public \
             && echo "marked ${PKG} public" \
             || echo "WARN: failed to flip ${PKG} to public (continuing — flip manually via Settings → Packages)"
+
+  # ----------------------------------------------------------------------
+  # Wasm build-environment image. Unlike the Linux matrix above this is a
+  # single image (no arch / variant fan-out): wasm is a cross-compile from
+  # x86_64 host, the rust toolchain isn't part of the default wasm build
+  # path, and the few extensions that DO want rust+wasm can install rust
+  # inline. If that calculus changes, add a wasm-rust variant alongside
+  # the existing pattern.
+  # ----------------------------------------------------------------------
+  build_wasm:
+    name: wasm
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: tags
+        run: |
+          NS="ghcr.io/query-farm-haybarn"
+          BASE="${NS}/haybarn-wasm"
+          echo "image_base=${BASE}" >> "$GITHUB_OUTPUT"
+          echo "tag_versioned=${BASE}:${HAYBARN_ENGINE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag_latest=${BASE}:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        run: |
+          docker build \
+            --build-arg "vcpkg_url=https://github.com/microsoft/vcpkg.git" \
+            --build-arg "vcpkg_commit=${HAYBARN_VCPKG_COMMIT}" \
+            -t "${{ steps.tags.outputs.tag_versioned }}" \
+            ./docker/wasm
+
+      - name: Push versioned tag
+        run: |
+          for i in 1 2 3; do
+            if docker push "${{ steps.tags.outputs.tag_versioned }}"; then
+              exit 0
+            fi
+            echo "push attempt $i failed; sleeping before retry"
+            sleep $((i * 15))
+          done
+          exit 1
+
+      - name: Push :latest alias
+        if: ${{ inputs.push_latest != false }}
+        run: |
+          docker tag "${{ steps.tags.outputs.tag_versioned }}" "${{ steps.tags.outputs.tag_latest }}"
+          for i in 1 2 3; do
+            if docker push "${{ steps.tags.outputs.tag_latest }}"; then
+              exit 0
+            fi
+            echo "push attempt $i failed; sleeping before retry"
+            sleep $((i * 15))
+          done
+          exit 1
+
+      - name: Make package public
+        if: ${{ always() }}
+        env:
+          PKG: haybarn-wasm
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api -X PATCH "/orgs/query-farm-haybarn/packages/container/${PKG}" \
+            -f visibility=public \
+            && echo "marked ${PKG} public" \
+            || echo "WARN: failed to flip ${PKG} to public (continuing — flip manually via Settings → Packages)"

@@ -87,8 +87,14 @@ ENV VCPKG_ROOT=/vcpkg
 ENV VCPKG_TOOLCHAIN_PATH=/vcpkg/scripts/buildsystems/vcpkg.cmake
 ENV PATH="${VCPKG_ROOT}:${PATH}"
 
-# Common environment variables (mirrors the Linux images).
-ENV GEN=ninja
+# Common environment variables.
+# Note: deliberately NOT setting GEN=ninja here (which the Linux images do).
+# The extension-ci-tools Makefile target for wasm hardcodes
+# `emmake make -C build/<arch>` — when cmake was configured with -GNinja
+# the build dir contains build.ninja, not a Makefile, and that `make -C`
+# fails with "No targets specified and no makefile found". The inline
+# (non-Docker) wasm path doesn't set GEN either, so it falls back to
+# Unix Makefiles; this image mirrors that for compat.
 ENV DUCKDB_PLATFORM=wasm
 
 # Allow git access to the mounted volume.

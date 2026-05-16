@@ -124,12 +124,32 @@ jobs:
             ./docker/${{ matrix.arch.name }}
 
       - name: Push versioned tag
-        run: docker push "${{ steps.tags.outputs.tag_versioned }}"
+        # GHCR occasionally returns "unknown blob" when many concurrent pushes
+        # race on shared layers — its blob-dedup logic doesn't always settle
+        # before another worker references the in-flight upload. Retry up to 3
+        # times with a small backoff; subsequent attempts pick up where the
+        # last left off and the dedup window typically closes within a minute.
+        run: |
+          for i in 1 2 3; do
+            if docker push "${{ steps.tags.outputs.tag_versioned }}"; then
+              exit 0
+            fi
+            echo "push attempt $i failed; sleeping before retry"
+            sleep $((i * 15))
+          done
+          exit 1
 
       - name: Push :latest alias
         # Only on workflow_dispatch with push_latest=true, OR on push to haybarn.
         # Skip on PR/branch builds that didn't ask for it.
         if: ${{ inputs.push_latest != false }}
         run: |
-          docker tag  "${{ steps.tags.outputs.tag_versioned }}" "${{ steps.tags.outputs.tag_latest }}"
-          docker push "${{ steps.tags.outputs.tag_latest }}"
+          docker tag "${{ steps.tags.outputs.tag_versioned }}" "${{ steps.tags.outputs.tag_latest }}"
+          for i in 1 2 3; do
+            if docker push "${{ steps.tags.outputs.tag_latest }}"; then
+              exit 0
+            fi
+            echo "push attempt $i failed; sleeping before retry"
+            sleep $((i * 15))
+          done
+          exit 1

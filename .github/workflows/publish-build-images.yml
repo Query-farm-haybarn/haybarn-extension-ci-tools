@@ -1,0 +1,139 @@
+# Pre-build & publish the Linux build-environment Docker images to GHCR.
+#
+# Why this exists
+# ===============
+# `_extension_distribution.yml`'s `Build Docker image` step does
+# `docker build ./docker/<arch>` inline on every Linux extension build. With
+# haybarn-community-extensions about to fire 100+ extension builds per
+# sync-merge (× 4 Linux archs = 400+ Linux jobs), rebuilding the same
+# manylinux/musllinux base image 400× per `build_all` is ~70 CI hours wasted
+# on Docker setup alone. Pre-building once and pulling at consumer-time
+# reduces that to ~30 seconds per leg.
+#
+# Image taxonomy
+# ==============
+# Per arch (4 archs) we publish 3 variants, distinguished by which
+# `extra_toolchains` were baked in:
+#
+#   :base   — no extras (covers the majority of extensions)
+#   :rust   — base + Rust toolchain
+#   :full   — base + Rust + Go + Fortran + parser_tools + unixodbc + multimedia
+#
+# Total: 4 × 3 = 12 images per release. Tagged with the engine version
+# (e.g. v1.5.2) for stable consumer pins, plus :latest as a moving alias.
+#
+# Naming: ghcr.io/query-farm-haybarn/haybarn-<arch><-variant>:v1.5.2
+#   e.g. ghcr.io/query-farm-haybarn/haybarn-linux_amd64-rust:v1.5.2
+#
+# Note on the base / no-variant case: we still publish it with an explicit
+# `-base` suffix (rather than no suffix) so the consumer URL is uniform
+# regardless of variant — a single template can construct any of the 12
+# names. This avoids special-casing in the consumer workflow.
+#
+# Triggers
+# ========
+#   workflow_dispatch  — manual rebuilds (e.g. after a vcpkg pin bump)
+#   push, paths: docker/** — auto-rebuild when a Dockerfile changes
+#
+# Native arm64 runners (`ubuntu-24.04-arm`) are used for the *_arm64 archs;
+# qemu emulation is avoided entirely.
+name: Publish build images
+
+on:
+  workflow_dispatch:
+    inputs:
+      engine_version:
+        description: 'Engine version tag (becomes the image tag, e.g. v1.5.2)'
+        type: string
+        default: 'v1.5.2'
+      vcpkg_commit:
+        description: 'vcpkg commit to bake into the images'
+        type: string
+        default: '84bab45d415d22042bd0b9081aea57f362da3f35'
+      push_latest:
+        description: 'Also tag :latest'
+        type: boolean
+        default: true
+  push:
+    branches: [haybarn]
+    paths:
+      - 'docker/**'
+      - '.github/workflows/publish-build-images.yml'
+
+env:
+  # The vcpkg pin baked into the images. For the v1.5.2 engine series this is
+  # the upstream-recommended commit. Override via workflow_dispatch inputs.
+  HAYBARN_ENGINE_VERSION: ${{ inputs.engine_version || 'v1.5.2' }}
+  HAYBARN_VCPKG_COMMIT:   ${{ inputs.vcpkg_commit   || '84bab45d415d22042bd0b9081aea57f362da3f35' }}
+
+jobs:
+  build:
+    name: ${{ matrix.arch }} / ${{ matrix.variant.name }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      # `packages: write` is what lets `docker push` to ghcr.io against the
+      # ambient GITHUB_TOKEN — no PAT, no separate registry credential.
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # 4 archs × 3 variants = 12 image builds. Native arm64 runners
+        # paired with the *_arm64 archs avoid QEMU emulation entirely.
+        arch:
+          - { name: linux_amd64,      runner: ubuntu-24.04     }
+          - { name: linux_arm64,      runner: ubuntu-24.04-arm }
+          - { name: linux_amd64_musl, runner: ubuntu-24.04     }
+          - { name: linux_arm64_musl, runner: ubuntu-24.04-arm }
+        variant:
+          # Empty extra_toolchains => `case "$extra_toolchains" in *\;X\;*)`
+          # blocks all fall through, so nothing optional gets installed.
+          - { name: base, extras: ';;' }
+          - { name: rust, extras: ';rust;' }
+          - { name: full, extras: ';rust;go;fortran;parser_tools;unixodbc;multimedia;' }
+        # GitHub Actions doesn't let us nest a map literal inside `matrix`, so
+        # we set `runner` via `arch.runner` and reference matrix.arch.name
+        # / matrix.arch.runner in the body. Same for `variant`.
+        include: []
+      max-parallel: 12  # all 12 in parallel; each is independent
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: tags
+        run: |
+          # GHCR namespace must be lowercase. Query-farm-haybarn org name is
+          # mixed case in GitHub but GHCR resolves the lowercase form.
+          NS="ghcr.io/query-farm-haybarn"
+          BASE="${NS}/haybarn-${{ matrix.arch.name }}-${{ matrix.variant.name }}"
+          echo "image_base=${BASE}" >> "$GITHUB_OUTPUT"
+          echo "tag_versioned=${BASE}:${HAYBARN_ENGINE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag_latest=${BASE}:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        run: |
+          docker build \
+            --build-arg "vcpkg_url=https://github.com/microsoft/vcpkg.git" \
+            --build-arg "vcpkg_commit=${HAYBARN_VCPKG_COMMIT}" \
+            --build-arg "extra_toolchains=${{ matrix.variant.extras }}" \
+            -t "${{ steps.tags.outputs.tag_versioned }}" \
+            ./docker/${{ matrix.arch.name }}
+
+      - name: Push versioned tag
+        run: docker push "${{ steps.tags.outputs.tag_versioned }}"
+
+      - name: Push :latest alias
+        # Only on workflow_dispatch with push_latest=true, OR on push to haybarn.
+        # Skip on PR/branch builds that didn't ask for it.
+        if: ${{ inputs.push_latest != false }}
+        run: |
+          docker tag  "${{ steps.tags.outputs.tag_versioned }}" "${{ steps.tags.outputs.tag_latest }}"
+          docker push "${{ steps.tags.outputs.tag_latest }}"

@@ -94,7 +94,7 @@ jobs:
       max-parallel: 12  # all 12 in parallel; each is independent
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -189,7 +189,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Log in to GHCR
         uses: docker/login-action@v3

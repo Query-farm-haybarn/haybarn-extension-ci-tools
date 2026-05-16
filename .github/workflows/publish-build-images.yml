@@ -68,8 +68,8 @@ env:
 
 jobs:
   build:
-    name: ${{ matrix.arch }} / ${{ matrix.variant.name }}
-    runs-on: ${{ matrix.runner }}
+    name: ${{ matrix.arch.name }} / ${{ matrix.variant.name }}
+    runs-on: ${{ matrix.arch.runner }}
     permissions:
       # `packages: write` is what lets `docker push` to ghcr.io against the
       # ambient GITHUB_TOKEN — no PAT, no separate registry credential.
@@ -91,10 +91,6 @@ jobs:
           - { name: base, extras: ';;' }
           - { name: rust, extras: ';rust;' }
           - { name: full, extras: ';rust;go;fortran;parser_tools;unixodbc;multimedia;' }
-        # GitHub Actions doesn't let us nest a map literal inside `matrix`, so
-        # we set `runner` via `arch.runner` and reference matrix.arch.name
-        # / matrix.arch.runner in the body. Same for `variant`.
-        include: []
       max-parallel: 12  # all 12 in parallel; each is independent
 
     steps:

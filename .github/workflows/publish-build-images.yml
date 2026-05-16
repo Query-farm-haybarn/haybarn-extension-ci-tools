@@ -153,3 +153,23 @@ jobs:
             sleep $((i * 15))
           done
           exit 1
+
+      - name: Make package public
+        # GHCR packages default to private — even when published by a public
+        # repo under a public org — and cross-repo pulls fail with
+        # "denied" even after a successful docker login. Flipping to public
+        # is the right end state for build-environment images (no secrets,
+        # public source) AND removes the need for consumer workflows to
+        # carry explicit auth. The PATCH endpoint requires admin:packages
+        # scope; GITHUB_TOKEN issued for this same-org repo has that scope
+        # implicitly. Runs always so a half-published image still gets
+        # made public on partial failure.
+        if: ${{ always() }}
+        env:
+          PKG: haybarn-${{ matrix.arch.name }}-${{ matrix.variant.name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api -X PATCH "/orgs/query-farm-haybarn/packages/container/${PKG}" \
+            -f visibility=public \
+            && echo "marked ${PKG} public" \
+            || echo "WARN: failed to flip ${PKG} to public (continuing — flip manually via Settings → Packages)"

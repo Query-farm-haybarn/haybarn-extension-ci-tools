@@ -1,5 +1,13 @@
 FROM quay.io/pypa/manylinux_2_28_x86_64:2026.05.13-1
 
+# OCI image label — links this package to its source repo on GHCR so
+# the GitHub UI shows the repo on the package page, the package counts
+# as "originated from" the source repo for automatic-access purposes,
+# and downstream tooling (e.g. dependabot) can find provenance.
+LABEL org.opencontainers.image.source="https://github.com/Query-farm-haybarn/haybarn-extension-ci-tools"
+LABEL org.opencontainers.image.description="Haybarn community-extensions build environment"
+LABEL org.opencontainers.image.licenses="MIT"
+
 # Setup the basic necessities
 RUN yum groupinstall -y "Development Tools"
 RUN yum install -y curl zip unzip tar autoconf libtool

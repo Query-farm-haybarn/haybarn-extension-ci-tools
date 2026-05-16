@@ -216,7 +216,22 @@ on:
         default: 'query-farm-haybarn'
 
 env:
-  VCPKG_BINARY_SOURCES: ${{ inputs.vcpkg_binary_sources == '' && 'clear;http,https://vcpkg-cache.duckdb.org,read' || format(inputs.vcpkg_binary_sources, secrets.vcpkg_token) }}
+  # Default to the Haybarn vcpkg cache (readwrite, fronted by the
+  # Cloudflare Worker → R2). Reads are anonymous; writes need the bearer
+  # token, substituted at job-start via the `{0}` placeholder. Callers
+  # can override via `vcpkg_binary_sources` if they need to point elsewhere
+  # (e.g. a fork running its own cache).
+  #
+  # The upstream `https://vcpkg-cache.duckdb.org,read` default was the
+  # original fork's fallback — read-only, but more importantly NOT writable,
+  # so cold-miss build outputs were never repopulated and every cold run
+  # paid the full vcpkg compile cost. Switching the default here gives us
+  # automatic write-back on cold misses without each caller having to
+  # remember to set the URL.
+  # Wrapped in YAML double-quotes because the inner GHA expression contains
+  # `Authorization: Bearer …` — the colon-space-text shape would otherwise be
+  # parsed as a YAML mapping by tools (and by GitHub itself).
+  VCPKG_BINARY_SOURCES: "${{ format(inputs.vcpkg_binary_sources == '' && 'clear;http,https://haybarn-vcpkg-cache.rusty-bb6.workers.dev,readwrite,Authorization: Bearer {0}' || inputs.vcpkg_binary_sources, secrets.vcpkg_token) }}"
 
 jobs:
   generate_matrix:

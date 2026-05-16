@@ -180,6 +180,40 @@ on:
         required: false
         type: string
         default: 'regular'
+      # Haybarn: opt into pulling a pre-built build-environment image from GHCR
+      # (published by publish-build-images.yml) instead of running `docker build`
+      # inline on every Linux job. Saves ~5-8 min of Docker setup per leg, which
+      # adds up to ~70 CI hours per 150-extension build_all. Default false so
+      # existing callers (e.g. haybarn-extensions.yml) keep the original
+      # behavior until they opt in.
+      use_prebuilt_images:
+        required: false
+        type: boolean
+        default: false
+      # Which pre-built image variant to pull when use_prebuilt_images=true:
+      #   base — no extras  (default, covers ~80% of extensions)
+      #   rust — base + Rust toolchain
+      #   full — base + Rust + Go + Fortran + parser_tools + unixodbc + multimedia
+      # Ignored when use_prebuilt_images=false.
+      image_variant:
+        required: false
+        type: string
+        default: 'base'
+      # Tag of the pre-built image to pull. Conventionally the engine version
+      # (e.g. v1.5.2). The publish-build-images workflow tags images with the
+      # engine version they bake in, so consumers can pin this to the same
+      # value they use for `duckdb_version` and get a matching image.
+      prebuilt_image_tag:
+        required: false
+        type: string
+        default: 'v1.5.2'
+      # The org/user namespace under ghcr.io that holds the published images.
+      # Defaults to the Haybarn org; can be overridden if a fork republishes
+      # the image set under a different namespace.
+      prebuilt_image_namespace:
+        required: false
+        type: string
+        default: 'query-farm-haybarn'
 
 env:
   VCPKG_BINARY_SOURCES: ${{ inputs.vcpkg_binary_sources == '' && 'clear;http,https://vcpkg-cache.duckdb.org,read' || format(inputs.vcpkg_binary_sources, secrets.vcpkg_token) }}
@@ -358,7 +392,27 @@ jobs:
           repository: ${{ inputs.override_ci_tools_repository }}
           fetch-depth: 0
 
+      # Haybarn: two paths to a `duckdb/<arch>` local image tag — either pull
+      # a pre-built image from GHCR (fast, ~30s) or build inline (slow, ~5-8m).
+      # Both end with the same local tag `duckdb/${arch}` so all downstream
+      # `docker run duckdb/${arch} …` lines work unchanged.
+      - name: Pull pre-built Docker image
+        if: ${{ inputs.use_prebuilt_images }}
+        shell: bash
+        env:
+          # Compose the full reference once for both the docker pull and the
+          # subsequent local-tag step. Format:
+          #   ghcr.io/<namespace>/haybarn-<arch>-<variant>:<tag>
+          # Variant suffix is uniform (even `-base`) so the URL template
+          # never has to special-case "no variant."
+          IMAGE_REF: ghcr.io/${{ inputs.prebuilt_image_namespace }}/haybarn-${{ matrix.duckdb_arch }}-${{ inputs.image_variant }}:${{ inputs.prebuilt_image_tag }}
+        run: |
+          echo "Pulling ${IMAGE_REF}"
+          docker pull "${IMAGE_REF}"
+          docker tag  "${IMAGE_REF}" "duckdb/${{ matrix.duckdb_arch }}"
+
       - name: Build Docker image
+        if: ${{ !inputs.use_prebuilt_images }}
         shell: bash
         run: |
           docker build \

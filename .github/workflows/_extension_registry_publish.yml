@@ -1,0 +1,360 @@
+# Reusable + dispatchable workflow that publishes pre-built pip wheels +
+# npm packages to PyPI / npm.
+#
+# Single source of truth for both consumers:
+#   - Query-farm-haybarn/haybarn (engine core extensions)
+#   - Query-farm-haybarn/haybarn-community-extensions (community)
+#
+# Two artifact-shape modes (controlled by inputs.artifact_shape):
+#
+#   * "bundled"        — used by engine core. Two artifacts per build run:
+#                          core-pypi-wheels       (flat directory of *.whl)
+#                          core-npm-packages      (npm-leaves/ + npm-metas/ subdirs)
+#                        Single PyPI publish call, two-pass npm publish
+#                        (leaves first, then metas).
+#
+#   * "per-extension"  — used by community. Per-(extension, arch) artifacts:
+#                          pypi-wheel-<extension>-<arch>
+#                          npm-leaf-<extension>-<duckdb_version>-<arch>
+#                        Meta package is built inline from PRESENT_LEAVES
+#                        derived from downloaded leaf artifacts.
+#
+# Both modes publish via account/scope-scoped tokens (HAYBARN_PYPI_TOKEN +
+# HAYBARN_NPM_TOKEN org secrets) — not Trusted Publishers OIDC, which
+# requires per-package registration that doesn't scale.
+#
+# publish_pypi and publish_npm are independent jobs — either can fail
+# without blocking the other, so a PyPI 429 doesn't kill the npm side.
+#
+# Retry recipe (manual workflow_dispatch from the consuming repo, NOT
+# from this ci-tools repo — see consumer-side wrapper workflow):
+#
+#   gh workflow run "_extension_registry_publish.yml" \\
+#     --repo <consumer-repo> --ref main \\
+#     -f source_run_id=<the build run id> \\
+#     -f extension_name=<for per-extension mode>
+
+name: Extension Registry Publish (shared)
+on:
+  workflow_call:
+    inputs:
+      artifact_shape:
+        description: 'Artifact layout: bundled (engine core) or per-extension (community)'
+        required: true
+        type: string
+      source_run_id:
+        description: 'Build run ID whose artifacts to publish. Empty → current run.'
+        required: false
+        type: string
+        default: ''
+      # per-extension mode only:
+      extension_name:
+        required: false
+        type: string
+        default: ''
+      duckdb_version:
+        required: false
+        type: string
+        default: 'v1.5.2'
+      # per-extension mode only — passed from the build's deploy job outputs:
+      version:
+        required: false
+        type: string
+        default: ''
+      ext_commit:
+        required: false
+        type: string
+        default: ''
+      extension_version_label:
+        required: false
+        type: string
+        default: ''
+    secrets:
+      HAYBARN_PYPI_TOKEN:
+        required: true
+      HAYBARN_NPM_TOKEN:
+        required: true
+
+jobs:
+  # ------------------------------------------------------------------
+  # PyPI publish — both modes use pypa/gh-action-pypi-publish.
+  # ------------------------------------------------------------------
+  publish_pypi:
+    name: Publish PyPI
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions:  read     # cross-run actions/download-artifact
+      id-token: write    # PEP 740 attestations
+    concurrency:
+      # Global serialization across all calls — keeps PyPI's anti-spam
+      # rate limit from getting tripped by parallel publishes.
+      group: registry-publish-pypi-${{ inputs.artifact_shape == 'bundled' && 'core' || format('community-{0}', inputs.extension_name) }}
+      cancel-in-progress: false
+    steps:
+      - name: Download wheels (bundled mode)
+        if: ${{ inputs.artifact_shape == 'bundled' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: core-pypi-wheels
+          path: dist/
+          run-id: ${{ inputs.source_run_id != '' && inputs.source_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Download wheels (per-extension mode)
+        if: ${{ inputs.artifact_shape == 'per-extension' }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pypi-wheel-${{ inputs.extension_name }}-*
+          path: dist/
+          merge-multiple: true
+          run-id: ${{ inputs.source_run_id != '' && inputs.source_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+
+      - run: ls -la dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          password: ${{ secrets.HAYBARN_PYPI_TOKEN }}
+          attestations: true
+          skip-existing: true
+          verbose: true
+
+  # ------------------------------------------------------------------
+  # npm publish — bundled mode iterates pre-built leaves/metas dirs;
+  # per-extension mode unpacks per-platform tarballs + builds the meta
+  # package inline.
+  # ------------------------------------------------------------------
+  publish_npm:
+    name: Publish npm
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions:  read
+      id-token: write    # --provenance attestations
+    concurrency:
+      group: registry-publish-npm-${{ inputs.artifact_shape == 'bundled' && 'core' || format('community-{0}', inputs.extension_name) }}
+      cancel-in-progress: false
+    steps:
+      # Checkout this ci-tools repo so the scripts in scripts/publish/
+      # are available to the per-extension meta-build step.
+      - uses: actions/checkout@v4
+        with:
+          repository: Query-farm-haybarn/haybarn-extension-ci-tools
+          ref: ${{ github.workflow_sha || github.sha }}
+          path: ci-tools
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      # ---------- bundled mode: download core-npm-packages ----------
+      - name: Download bundled npm packages (bundled mode)
+        if: ${{ inputs.artifact_shape == 'bundled' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: core-npm-packages
+          path: dist/
+          run-id: ${{ inputs.source_run_id != '' && inputs.source_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: List bundled npm packages (bundled mode)
+        if: ${{ inputs.artifact_shape == 'bundled' }}
+        run: |
+          echo "leaves:"; ls dist/npm-leaves/ 2>/dev/null || echo "(none)"
+          echo "metas:";  ls dist/npm-metas/  2>/dev/null || echo "(none)"
+
+      - name: Publish leaves (bundled mode)
+        if: ${{ inputs.artifact_shape == 'bundled' }}
+        env:
+          NPM_CONFIG_PROVENANCE: 'true'
+          NODE_AUTH_TOKEN: ${{ secrets.HAYBARN_NPM_TOKEN }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          n_ok=0; n_skip=0; n_fail=0
+          for leaf in dist/npm-leaves/*/; do
+            [[ -d "$leaf" ]] || continue
+            pkg=$(python3 -c "import json; print(json.load(open('$leaf/package.json'))['name'])")
+            ver=$(python3 -c "import json; print(json.load(open('$leaf/package.json'))['version'])")
+            echo "::group::$pkg@$ver"
+            if (cd "$leaf" && npm publish --provenance --access public --tag latest 2>/tmp/npm.err); then
+              n_ok=$((n_ok+1)); echo "  → published"
+            elif grep -qiE 'previously published|EPUBLISHCONFLICT|cannot publish over' /tmp/npm.err; then
+              n_skip=$((n_skip+1)); echo "  → already published, skipping"
+            else
+              n_fail=$((n_fail+1)); cat /tmp/npm.err
+              echo "::error::publish failed for $pkg@$ver"
+            fi
+            echo "::endgroup::"
+          done
+          echo "leaves: ok=$n_ok skip=$n_skip fail=$n_fail"
+          [[ $n_fail -eq 0 ]]
+
+      - name: Publish metas (bundled mode)
+        if: ${{ inputs.artifact_shape == 'bundled' }}
+        env:
+          NPM_CONFIG_PROVENANCE: 'true'
+          NODE_AUTH_TOKEN: ${{ secrets.HAYBARN_NPM_TOKEN }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          n_ok=0; n_skip=0; n_fail=0
+          for meta in dist/npm-metas/*/; do
+            [[ -d "$meta" ]] || continue
+            pkg=$(python3 -c "import json; print(json.load(open('$meta/package.json'))['name'])")
+            ver=$(python3 -c "import json; print(json.load(open('$meta/package.json'))['version'])")
+            echo "::group::$pkg@$ver"
+            if (cd "$meta" && npm publish --provenance --access public --tag latest 2>/tmp/npm.err); then
+              n_ok=$((n_ok+1)); echo "  → published"
+            elif grep -qiE 'previously published|EPUBLISHCONFLICT|cannot publish over' /tmp/npm.err; then
+              n_skip=$((n_skip+1)); echo "  → already published, skipping"
+            else
+              n_fail=$((n_fail+1)); cat /tmp/npm.err
+              echo "::error::publish failed for $pkg@$ver"
+            fi
+            echo "::endgroup::"
+          done
+          echo "metas: ok=$n_ok skip=$n_skip fail=$n_fail"
+          [[ $n_fail -eq 0 ]]
+
+      # ---------- per-extension mode ----------
+      - name: Download leaf tarballs (per-extension mode)
+        if: ${{ inputs.artifact_shape == 'per-extension' }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: npm-leaf-${{ inputs.extension_name }}-${{ inputs.duckdb_version }}-*
+          path: leaves/
+          run-id: ${{ inputs.source_run_id != '' && inputs.source_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Resolve version + ext_commit (per-extension mode)
+        if: ${{ inputs.artifact_shape == 'per-extension' }}
+        id: meta
+        shell: bash
+        env:
+          IN_VERSION:    ${{ inputs.version }}
+          IN_EXT_COMMIT: ${{ inputs.ext_commit }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${IN_VERSION:-}" ]]; then
+            VERSION="$IN_VERSION"
+          else
+            VERSION=$(python3 -c "
+          import glob, json
+          ps = glob.glob('leaves/*/package.json')
+          if not ps:
+              raise SystemExit('no leaf package.json found')
+          print(json.load(open(ps[0]))['version'])
+          ")
+          fi
+          if [[ -n "${IN_EXT_COMMIT:-}" ]]; then
+            EXT_COMMIT="$IN_EXT_COMMIT"
+          else
+            EXT_COMMIT=$(python3 -c "
+          import glob, json, tarfile
+          ps = glob.glob('leaves/*/npm-leaf.tar.gz')
+          if not ps:
+              raise SystemExit('no npm-leaf.tar.gz found')
+          with tarfile.open(ps[0]) as t:
+              for m in t:
+                  if m.name.endswith('package.json'):
+                      data = json.load(t.extractfile(m))
+                      print(data.get('haybarn', {}).get('ext_commit', ''))
+                      break
+              else:
+                  raise SystemExit('package.json not found in tar')
+          ")
+          fi
+          { echo "version=$VERSION"; echo "ext_commit=$EXT_COMMIT"; } >> "$GITHUB_OUTPUT"
+
+      - name: Publish leaves (per-extension mode)
+        if: ${{ inputs.artifact_shape == 'per-extension' }}
+        id: leaves
+        env:
+          NPM_CONFIG_PROVENANCE: 'true'
+          NODE_AUTH_TOKEN: ${{ secrets.HAYBARN_NPM_TOKEN }}
+          VERSION:   ${{ steps.meta.outputs.version }}
+          EXTENSION: ${{ inputs.extension_name }}
+          DV:        ${{ inputs.duckdb_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          HV="${DV#v}"
+          HSUFFIX="h${HV//./-}"
+          META_PKG="@haybarn/ext-${EXTENSION}-${HSUFFIX}"
+          PRESENT_LEAVES=""
+          ART_PREFIX="leaves/npm-leaf-${EXTENSION}-${DV}-"
+          META_PREFIX="${META_PKG}-"
+          for art in "${ART_PREFIX}"*; do
+            [[ -d "$art" ]] || continue
+            ARCH="${art#"$ART_PREFIX"}"
+            echo "::group::leaf for $ARCH"
+            STAGE=$(mktemp -d)
+            tar -xzf "$art/npm-leaf.tar.gz" -C "$STAGE"
+            LEAF_NAME=$(python3 -c "import json; print(json.load(open('$STAGE/package.json'))['name'])")
+            echo "publishing $LEAF_NAME @ $VERSION"
+            if ! (cd "$STAGE" && npm publish --provenance --access public --tag latest 2>/tmp/npm.err); then
+              if grep -qiE 'previously published|EPUBLISHCONFLICT|cannot publish over' /tmp/npm.err; then
+                echo "::notice::$LEAF_NAME@$VERSION already published — skipping"
+              else
+                cat /tmp/npm.err
+                echo "::error::npm publish failed for $LEAF_NAME@$VERSION"; exit 1
+              fi
+            fi
+            SLUG="${LEAF_NAME#"$META_PREFIX"}"
+            if [[ -n "$PRESENT_LEAVES" ]]; then
+              PRESENT_LEAVES="${PRESENT_LEAVES},${SLUG}"
+            else
+              PRESENT_LEAVES="$SLUG"
+            fi
+            echo "::endgroup::"
+          done
+          if [[ -z "$PRESENT_LEAVES" ]]; then
+            echo "::error::no npm leaves found"; exit 1
+          fi
+          { echo "present_leaves=$PRESENT_LEAVES"; echo "meta_pkg=$META_PKG"; } >> "$GITHUB_OUTPUT"
+
+      - name: Build + publish meta (per-extension mode)
+        if: ${{ inputs.artifact_shape == 'per-extension' }}
+        env:
+          NPM_CONFIG_PROVENANCE: 'true'
+          NODE_AUTH_TOKEN: ${{ secrets.HAYBARN_NPM_TOKEN }}
+          VERSION:           ${{ steps.meta.outputs.version }}
+          EXTENSION:         ${{ inputs.extension_name }}
+          DV:                ${{ inputs.duckdb_version }}
+          EXT_COMMIT:        ${{ steps.meta.outputs.ext_commit }}
+          EXT_VERSION_LABEL: ${{ inputs.extension_version_label }}
+          PRESENT_LEAVES:    ${{ steps.leaves.outputs.present_leaves }}
+          META_PKG:          ${{ steps.leaves.outputs.meta_pkg }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          HV="${DV#v}"
+          export STAGE="stage/npm-meta"
+          export PKG="$META_PKG"
+          export HAYBARN_VERSION="$HV"
+          export HAYBARN_METADATA="$STAGE/haybarn-metadata.json"
+          export VERSION EXTENSION PRESENT_LEAVES
+          mkdir -p "$STAGE"
+          python3 ci-tools/scripts/publish/generate_haybarn_metadata.py \
+            --extension "$EXTENSION" \
+            --ext-commit "$EXT_COMMIT" \
+            --haybarn-version "$HV" \
+            --ext-version-label "$EXT_VERSION_LABEL" \
+            --sha256 "see-leaf-packages-for-per-platform-sha256" \
+            --built-at "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            --out "$HAYBARN_METADATA"
+          python3 ci-tools/scripts/publish/npm_build_meta.py
+          cat "$STAGE/package.json"
+          echo "::notice::publishing $META_PKG @ $VERSION"
+          if ! (cd "$STAGE" && npm publish --provenance --access public --tag latest 2>/tmp/npm-meta.err); then
+            if grep -qiE 'previously published|EPUBLISHCONFLICT|cannot publish over' /tmp/npm-meta.err; then
+              echo "::notice::$META_PKG@$VERSION already published — skipping"
+            else
+              cat /tmp/npm-meta.err
+              echo "::error::npm publish failed for $META_PKG@$VERSION"; exit 1
+            fi
+          fi

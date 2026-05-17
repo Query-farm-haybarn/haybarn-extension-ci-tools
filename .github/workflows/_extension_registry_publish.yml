@@ -42,6 +42,10 @@ on:
         description: 'Artifact layout: bundled (engine core) or per-extension (community)'
         required: true
         type: string
+      ci_tools_ref:
+        description: 'SHA of this ci-tools repo to checkout for scripts/publish/ (pass the same SHA as the `uses: ...@<SHA>` pin)'
+        required: true
+        type: string
       source_run_id:
         description: 'Build run ID whose artifacts to publish. Empty → current run.'
         required: false
@@ -138,11 +142,17 @@ jobs:
       cancel-in-progress: false
     steps:
       # Checkout this ci-tools repo so the scripts in scripts/publish/
-      # are available to the per-extension meta-build step.
+      # are available to the per-extension meta-build step. The ref MUST
+      # be passed explicitly by the caller (same SHA as the `uses:
+      # ...@<SHA>` pin), because `github.workflow_sha` is not reliably
+      # the called-workflow's SHA in cross-repo workflow_call chains —
+      # in practice it resolves to the caller's commit SHA, and a
+      # subsequent fetch hits `remote error: upload-pack: not our ref`
+      # against ci-tools. Forcing an explicit input avoids that footgun.
       - uses: actions/checkout@v4
         with:
           repository: Query-farm-haybarn/haybarn-extension-ci-tools
-          ref: ${{ github.workflow_sha || github.sha }}
+          ref: ${{ inputs.ci_tools_ref }}
           path: ci-tools
 
       - uses: actions/setup-node@v6

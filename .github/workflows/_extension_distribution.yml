@@ -215,7 +215,7 @@ on:
         type: string
         default: 'query-farm-haybarn'
       # Haybarn: when true, the wasm leg pulls
-      # ghcr.io/<prebuilt_image_namespace>/haybarn-wasm:<prebuilt_image_tag>
+      # ghcr.io/<prebuilt_image_namespace>/haybarn-wasm-<wasm_image_variant>:<prebuilt_image_tag>
       # instead of installing emsdk + vcpkg inline. Eliminates the per-run
       # emsdk download (~300 MB, ~30-60s) AND removes the variable-UUID
       # emsdk path that defeats ccache hashing — emcc lives at /emsdk/...
@@ -225,6 +225,17 @@ on:
         required: false
         type: boolean
         default: false
+      # Which wasm Docker variant to pull. Mirrors `image_variant` for the
+      # Linux Docker fleet:
+      #   base — no extras (covers most C++-only extensions)
+      #   rust — rust toolchain + wasm32-unknown-emscripten target
+      #          (required by descriptors with `requires_toolchains: rust`,
+      #          e.g. `inflector`)
+      # Ignored when use_prebuilt_wasm_image=false.
+      wasm_image_variant:
+        required: false
+        type: string
+        default: 'base'
 
 env:
   # Default to the Haybarn vcpkg cache (readwrite, fronted by the
@@ -1395,7 +1406,7 @@ jobs:
         id: wasm_image
         shell: bash
         run: |
-          IMG="ghcr.io/${{ inputs.prebuilt_image_namespace }}/haybarn-wasm:${{ inputs.prebuilt_image_tag }}"
+          IMG="ghcr.io/${{ inputs.prebuilt_image_namespace }}/haybarn-wasm-${{ inputs.wasm_image_variant }}:${{ inputs.prebuilt_image_tag }}"
           echo "ref=${IMG}" >> "$GITHUB_OUTPUT"
           echo "Selected wasm image: ${IMG}"
 

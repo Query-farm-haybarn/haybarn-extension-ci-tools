@@ -117,3 +117,23 @@ ENV CCACHE_MAXSIZE=400M
 ENV CCACHE_NOHASHDIR=1
 ENV CCACHE_SLOPPINESS=time_macros,include_file_mtime,pch_defines
 ENV CCACHE_COMPILERCHECK=content
+
+###
+# Optional toolchains — controlled via the `extra_toolchains` build-arg,
+# mirroring the Linux Phase A pattern. The publish-build-images workflow
+# builds one image per variant (base / rust) and pushes them as
+# haybarn-wasm-<variant>:<engine-version> on GHCR.
+###
+ARG extra_toolchains
+
+# Rust (for community extensions like `inflector` that declare
+# `requires_toolchains: rust`). Includes the wasm32-unknown-emscripten
+# target since that's what every wasm-rust extension targets.
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN case "$extra_toolchains" in \
+  *\;rust\;*) \
+    curl https://sh.rustup.rs -sSf | bash -s -- -y --default-toolchain stable && \
+    /root/.cargo/bin/rustup target add wasm32-unknown-emscripten && \
+    /root/.cargo/bin/rustc --version \
+  ;; \
+esac

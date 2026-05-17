@@ -175,19 +175,24 @@ jobs:
             || echo "WARN: failed to flip ${PKG} to public (continuing — flip manually via Settings → Packages)"
 
   # ----------------------------------------------------------------------
-  # Wasm build-environment image. Unlike the Linux matrix above this is a
-  # single image (no arch / variant fan-out): wasm is a cross-compile from
-  # x86_64 host, the rust toolchain isn't part of the default wasm build
-  # path, and the few extensions that DO want rust+wasm can install rust
-  # inline. If that calculus changes, add a wasm-rust variant alongside
-  # the existing pattern.
+  # Wasm build-environment images. Fan out on toolchain variant so
+  # extensions declaring `requires_toolchains: rust` (e.g. `inflector`)
+  # get an image with rustc + wasm32-unknown-emscripten target baked in.
+  # No arch fan-out — wasm is a cross-compile from x86_64 host.
+  # Published as ghcr.io/.../haybarn-wasm-<variant>:<engine_version>.
   # ----------------------------------------------------------------------
   build_wasm:
-    name: wasm
+    name: wasm / ${{ matrix.variant.name }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - { name: base, extras: ';;' }
+          - { name: rust, extras: ';rust;' }
     steps:
       - uses: actions/checkout@v6
 
@@ -202,7 +207,7 @@ jobs:
         id: tags
         run: |
           NS="ghcr.io/query-farm-haybarn"
-          BASE="${NS}/haybarn-wasm"
+          BASE="${NS}/haybarn-wasm-${{ matrix.variant.name }}"
           echo "image_base=${BASE}" >> "$GITHUB_OUTPUT"
           echo "tag_versioned=${BASE}:${HAYBARN_ENGINE_VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag_latest=${BASE}:latest" >> "$GITHUB_OUTPUT"
@@ -212,6 +217,7 @@ jobs:
           docker build \
             --build-arg "vcpkg_url=https://github.com/microsoft/vcpkg.git" \
             --build-arg "vcpkg_commit=${HAYBARN_VCPKG_COMMIT}" \
+            --build-arg "extra_toolchains=${{ matrix.variant.extras }}" \
             -t "${{ steps.tags.outputs.tag_versioned }}" \
             ./docker/wasm
 
@@ -242,7 +248,7 @@ jobs:
       - name: Make package public
         if: ${{ always() }}
         env:
-          PKG: haybarn-wasm
+          PKG: haybarn-wasm-${{ matrix.variant.name }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh api -X PATCH "/orgs/query-farm-haybarn/packages/container/${PKG}" \

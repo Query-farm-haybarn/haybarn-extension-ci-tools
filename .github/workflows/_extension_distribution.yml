@@ -413,7 +413,7 @@ jobs:
       - name: Fetch override repository
         if: ${{inputs.override_duckdb_repository != ''}}
         run: |
-          rm -rf duckdb && git clone "${{ inputs.override_duckdb_repository }}" duckdb
+          rm -rf duckdb && git clone --depth=1 --branch "${{ inputs.duckdb_version }}" --single-branch "${{ inputs.override_duckdb_repository }}" duckdb
 
       - name: Set DuckDB to ref of calling workflow
         if: ${{inputs.set_caller_as_duckdb}}
@@ -753,7 +753,7 @@ jobs:
       - name: Fetch override repository
         if: ${{inputs.override_duckdb_repository != ''}}
         run: |
-          rm -rf duckdb && git clone "${{ inputs.override_duckdb_repository }}" duckdb
+          rm -rf duckdb && git clone --depth=1 --branch "${{ inputs.duckdb_version }}" --single-branch "${{ inputs.override_duckdb_repository }}" duckdb
 
       - name: Set DuckDB to ref of calling workflow
         if: ${{inputs.set_caller_as_duckdb}}
@@ -1101,7 +1101,7 @@ jobs:
         if: ${{inputs.override_duckdb_repository != ''}}
         shell: bash
         run: |
-          rm -rf duckdb && git clone "${{ inputs.override_duckdb_repository }}" duckdb
+          rm -rf duckdb && git clone --depth=1 --branch "${{ inputs.duckdb_version }}" --single-branch "${{ inputs.override_duckdb_repository }}" duckdb
 
       - name: Set DuckDB to ref of calling workflow
         if: ${{inputs.set_caller_as_duckdb}}
@@ -1321,7 +1321,7 @@ jobs:
       - name: Fetch override repository
         if: ${{inputs.override_duckdb_repository != ''}}
         run: |
-          rm -rf duckdb && git clone "${{ inputs.override_duckdb_repository }}" duckdb
+          rm -rf duckdb && git clone --depth=1 --branch "${{ inputs.duckdb_version }}" --single-branch "${{ inputs.override_duckdb_repository }}" duckdb
 
       - name: Set DuckDB to ref of calling workflow
         if: ${{inputs.set_caller_as_duckdb}}

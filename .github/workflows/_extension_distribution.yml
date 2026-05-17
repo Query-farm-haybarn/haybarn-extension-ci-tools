@@ -1099,10 +1099,9 @@ jobs:
 
       - name: Fetch override repository
         if: ${{inputs.override_duckdb_repository != ''}}
-        env:
-          DUCKDB_GIT_REPOSITORY: ${{ inputs.override_duckdb_repository }}
+        shell: bash
         run: |
-          rm -rf duckdb && mkdir duckdb && git clone "$DUCKDB_GIT_REPOSITORY" duckdb
+          rm -rf duckdb && git clone "${{ inputs.override_duckdb_repository }}" duckdb
 
       - name: Set DuckDB to ref of calling workflow
         if: ${{inputs.set_caller_as_duckdb}}
@@ -1114,10 +1113,9 @@ jobs:
 
       - name: Checkout DuckDB to version
         if: ${{ inputs.duckdb_version != '' }}
-        env:
-          DUCKDB_GIT_VERSION: ${{ inputs.duckdb_version }}
+        shell: bash
         run: |
-          (cd duckdb && git checkout "$DUCKDB_GIT_VERSION")
+          (cd duckdb && git checkout "${{ inputs.duckdb_version }}")
 
       - name: Tag extension
         if: ${{inputs.extension_tag != ''}}

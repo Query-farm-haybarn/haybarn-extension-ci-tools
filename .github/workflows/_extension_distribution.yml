@@ -72,6 +72,13 @@ on:
         required: false
         type: string
         default: ''
+      # Override the vcpkg asset sources config (download mirror for source
+      # tarballs). Default = the Haybarn cache; pass a value to point at your
+      # own asset mirror or to disable.
+      vcpkg_asset_sources:
+        required: false
+        type: string
+        default: ''
       vcpkg_extra_dependencies:
         required: false
         type: string
@@ -254,6 +261,16 @@ env:
   # `Authorization: Bearer …` — the colon-space-text shape would otherwise be
   # parsed as a YAML mapping by tools (and by GitHub itself).
   VCPKG_BINARY_SOURCES: "${{ format(inputs.vcpkg_binary_sources == '' && 'clear;http,https://haybarn-vcpkg-cache.rusty-bb6.workers.dev,readwrite,Authorization: Bearer {0}' || inputs.vcpkg_binary_sources, secrets.vcpkg_token) }}"
+  # Haybarn vcpkg ASSET cache (source-tarball mirror). Lives on the same
+  # Worker + R2 bucket as the binary cache, under the `assets/` key prefix.
+  # vcpkg's asset cache uses `x-azurl` — misnamed; works against any HTTP
+  # endpoint serving GET/PUT `<base>/<sha512>?<sas>`. Auth is in the URL
+  # query string because `x-azurl` has no Authorization-header support;
+  # the Worker accepts `?auth=<token>` as an equivalent of the header.
+  # `readwrite` + no `x-block-origin` = transparent mirror with origin
+  # fallback on cold miss, write-back on success — exactly the shape we
+  # want for transient-outage resilience without sacrificing reproducibility.
+  X_VCPKG_ASSET_SOURCES: "${{ inputs.vcpkg_asset_sources == '' && format('clear;x-azurl,https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/assets/,auth={0},readwrite', secrets.vcpkg_token) || inputs.vcpkg_asset_sources }}"
 
 jobs:
   generate_matrix:
@@ -396,7 +413,7 @@ jobs:
       - name: Fetch override repository
         if: ${{inputs.override_duckdb_repository != ''}}
         run: |
-          DUCKDB_GIT_REPOSITORY=${{ inputs.override_duckdb_repository }} make set_duckdb_repository
+          DUCKDB_GIT_REPOSITORY=${{ inputs.override_duckdb_repository }} rm -rf duckdb && mkdir duckdb && git clone "$DUCKDB_GIT_REPOSITORY" duckdb
 
       - name: Set DuckDB to ref of calling workflow
         if: ${{inputs.set_caller_as_duckdb}}
@@ -409,7 +426,7 @@ jobs:
       - name: Checkout DuckDB to version
         if: ${{ inputs.duckdb_version != '' }}
         run: |
-          DUCKDB_GIT_VERSION=${{ inputs.duckdb_version }} make set_duckdb_version
+          DUCKDB_GIT_VERSION=${{ inputs.duckdb_version }} (cd duckdb && git checkout "$DUCKDB_GIT_VERSION")
 
       - name: Tag extension
         if: ${{inputs.extension_tag != ''}}
@@ -478,6 +495,7 @@ jobs:
         run: |
           cat <<-EOF > docker_env.txt
           VCPKG_BINARY_SOURCES=$VCPKG_BINARY_SOURCES
+          X_VCPKG_ASSET_SOURCES=$X_VCPKG_ASSET_SOURCES
           USE_MERGED_VCPKG_MANIFEST=${{ inputs.use_merged_vcpkg_manifest }}
           AWS_ACCESS_KEY_ID=${{ secrets.VCPKG_CACHING_AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY=${{ secrets.VCPKG_CACHING_AWS_SECRET_ACCESS_KEY }}
@@ -735,7 +753,7 @@ jobs:
       - name: Fetch override repository
         if: ${{inputs.override_duckdb_repository != ''}}
         run: |
-          DUCKDB_GIT_REPOSITORY=${{ inputs.override_duckdb_repository }} make set_duckdb_repository
+          DUCKDB_GIT_REPOSITORY=${{ inputs.override_duckdb_repository }} rm -rf duckdb && mkdir duckdb && git clone "$DUCKDB_GIT_REPOSITORY" duckdb
 
       - name: Set DuckDB to ref of calling workflow
         if: ${{inputs.set_caller_as_duckdb}}
@@ -748,7 +766,7 @@ jobs:
       - name: Checkout DuckDB to version
         if: ${{ inputs.duckdb_version != '' }}
         run: |
-          DUCKDB_GIT_VERSION=${{ inputs.duckdb_version }} make set_duckdb_version
+          DUCKDB_GIT_VERSION=${{ inputs.duckdb_version }} (cd duckdb && git checkout "$DUCKDB_GIT_VERSION")
 
       - name: Tag extension
         if: ${{inputs.extension_tag != ''}}
@@ -1084,7 +1102,7 @@ jobs:
         env:
           DUCKDB_GIT_REPOSITORY: ${{ inputs.override_duckdb_repository }}
         run: |
-          make set_duckdb_repository
+          rm -rf duckdb && mkdir duckdb && git clone "$DUCKDB_GIT_REPOSITORY" duckdb
 
       - name: Set DuckDB to ref of calling workflow
         if: ${{inputs.set_caller_as_duckdb}}
@@ -1099,7 +1117,7 @@ jobs:
         env:
           DUCKDB_GIT_VERSION: ${{ inputs.duckdb_version }}
         run: |
-          make set_duckdb_version
+          (cd duckdb && git checkout "$DUCKDB_GIT_VERSION")
 
       - name: Tag extension
         if: ${{inputs.extension_tag != ''}}
@@ -1305,7 +1323,7 @@ jobs:
       - name: Fetch override repository
         if: ${{inputs.override_duckdb_repository != ''}}
         run: |
-          DUCKDB_GIT_REPOSITORY=${{ inputs.override_duckdb_repository }} make set_duckdb_repository
+          DUCKDB_GIT_REPOSITORY=${{ inputs.override_duckdb_repository }} rm -rf duckdb && mkdir duckdb && git clone "$DUCKDB_GIT_REPOSITORY" duckdb
 
       - name: Set DuckDB to ref of calling workflow
         if: ${{inputs.set_caller_as_duckdb}}
@@ -1318,7 +1336,7 @@ jobs:
       - name: Checkout DuckDB to version
         if: ${{ inputs.duckdb_version != '' }}
         run: |
-          DUCKDB_GIT_VERSION=${{ inputs.duckdb_version }} make set_duckdb_version
+          DUCKDB_GIT_VERSION=${{ inputs.duckdb_version }} (cd duckdb && git checkout "$DUCKDB_GIT_VERSION")
 
       - name: Tag extension
         if: ${{inputs.extension_tag != ''}}
@@ -1434,6 +1452,7 @@ jobs:
           # token has to land at runtime, not build time.
           cat > docker_env.txt <<EOF
           CCACHE_REMOTE_STORAGE=http://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache|bearer-token=${{ secrets.vcpkg_token }}|connect-timeout=10000|operation-timeout=30000
+          X_VCPKG_ASSET_SOURCES=$X_VCPKG_ASSET_SOURCES
           DUCKDB_PLATFORM=${{ matrix.duckdb_arch }}
           DUCKDB_GIT_VERSION=${{ inputs.duckdb_version }}
           EXTENSION_NAME=${{ inputs.extension_name }}

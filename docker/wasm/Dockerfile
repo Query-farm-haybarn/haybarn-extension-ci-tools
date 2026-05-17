@@ -138,10 +138,26 @@ ARG extra_toolchains
 # Rust (for community extensions like `inflector` that declare
 # `requires_toolchains: rust`). Includes the wasm32-unknown-emscripten
 # target since that's what every wasm-rust extension targets.
+#
+# RUST_VERSION pinned (not 'stable') for a wasm-specific reason: emsdk
+# 3.1.71's bundled wasm-opt (Binaryen ~119) does not understand the
+# `--enable-bulk-memory-opt` flag, which emcc emits whenever the input
+# wasm's target-features section advertises that feature. Rust 1.87+
+# (newer LLVM) emits `bulk-memory-opt`; Rust 1.86 does not. Mismatch
+# breaks the post-link wasm-opt pass for every Rust-backed extension
+# (lindel hit this first). Upstream community-extensions doesn't hit
+# it because their CI runs on bare GH runners where the only installed
+# Rust is the one their workflow's `dtolnay/rust-toolchain@1.86.0` step
+# installs; we baked `--default-toolchain stable` which advanced past
+# 1.86 and which Corrosion's CMake auto-detect prefers over the
+# workflow's rustup-default. Keep this version aligned with the
+# `dtolnay/rust-toolchain@<VERSION>` pin in
+# `.github/workflows/_extension_distribution.yml`.
+ARG RUST_VERSION=1.86.0
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN case "$extra_toolchains" in \
   *\;rust\;*) \
-    curl https://sh.rustup.rs -sSf | bash -s -- -y --default-toolchain stable && \
+    curl https://sh.rustup.rs -sSf | bash -s -- -y --default-toolchain ${RUST_VERSION} && \
     /root/.cargo/bin/rustup target add wasm32-unknown-emscripten && \
     /root/.cargo/bin/rustc --version \
   ;; \

@@ -27,6 +27,15 @@ RUN curl -fsSL "https://github.com/ccache/ccache/releases/download/v${CCACHE_VER
     && install -m 0755 "/tmp/ccache-${CCACHE_VERSION}-linux-aarch64-musl-static/ccache" /usr/local/bin/ccache \
     && rm -rf /tmp/ccache.tar.xz "/tmp/ccache-${CCACHE_VERSION}-linux-aarch64-musl-static" \
     && /usr/local/bin/ccache --version
+
+# sccache — Rust rustc-wrapper cache, see linux_amd64/Dockerfile for rationale.
+ARG SCCACHE_VERSION=0.8.2
+RUN curl -fsSL "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-aarch64-unknown-linux-musl.tar.gz" \
+      -o /tmp/sccache.tar.gz \
+    && tar -xzf /tmp/sccache.tar.gz -C /tmp \
+    && install -m 0755 "/tmp/sccache-v${SCCACHE_VERSION}-aarch64-unknown-linux-musl/sccache" /usr/local/bin/sccache \
+    && rm -rf /tmp/sccache.tar.gz "/tmp/sccache-v${SCCACHE_VERSION}-aarch64-unknown-linux-musl" \
+    && /usr/local/bin/sccache --version
 RUN yum install -y java-11-openjdk-devel maven
 RUN yum install -y wget
 RUN yum install -y kernel-headers

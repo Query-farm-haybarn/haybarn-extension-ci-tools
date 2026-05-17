@@ -532,6 +532,16 @@ jobs:
           # use Bearer token. Local cache stays L1, R2 is L2 (shared across
           # repos + branches + runners — survives GH cache flakiness).
           CCACHE_REMOTE_STORAGE=http://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache|bearer-token=${{ secrets.vcpkg_token }}|connect-timeout=10000|operation-timeout=30000
+          # Haybarn: sccache as RUSTC_WRAPPER for community extensions that
+          # compile Rust (build:cargo + many cmake exts with rust deps).
+          # WebDAV backend → same R2 worker as ccache, under sccache/ prefix.
+          # CARGO_INCREMENTAL=0 because cargo's incremental compilation and
+          # sccache are mutually exclusive — incremental is also broken on
+          # fresh runners anyway. Harmless when no Rust is compiled.
+          RUSTC_WRAPPER=sccache
+          SCCACHE_WEBDAV_ENDPOINT=https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/sccache/
+          SCCACHE_WEBDAV_TOKEN=${{ secrets.vcpkg_token }}
+          CARGO_INCREMENTAL=0
           SUBSET_EXTENSIONS_TESTS=${{ inputs.extensions_test_selection }}
           EOF
           echo '${{ inputs.test_config }}'| jq -r '.test_env_variables // {} | to_entries | map("\(.key)=\(.value)")|.[]' >> docker_env.txt
@@ -1450,6 +1460,11 @@ jobs:
           # token has to land at runtime, not build time.
           cat > docker_env.txt <<EOF
           CCACHE_REMOTE_STORAGE=http://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache|bearer-token=${{ secrets.vcpkg_token }}|connect-timeout=10000|operation-timeout=30000
+          # Haybarn: sccache for Rust extensions on wasm — see linux section.
+          RUSTC_WRAPPER=sccache
+          SCCACHE_WEBDAV_ENDPOINT=https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/sccache/
+          SCCACHE_WEBDAV_TOKEN=${{ secrets.vcpkg_token }}
+          CARGO_INCREMENTAL=0
           X_VCPKG_ASSET_SOURCES=$X_VCPKG_ASSET_SOURCES
           DUCKDB_PLATFORM=${{ matrix.duckdb_arch }}
           DUCKDB_GIT_VERSION=${{ inputs.duckdb_version }}

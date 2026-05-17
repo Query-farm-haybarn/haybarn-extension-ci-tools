@@ -49,6 +49,15 @@ RUN curl -fsSL "https://github.com/ccache/ccache/releases/download/v${CCACHE_VER
     && rm -rf /tmp/ccache.tar.xz "/tmp/ccache-${CCACHE_VERSION}-linux-x86_64-musl-static" \
     && /usr/local/bin/ccache --version
 
+# sccache — Rust rustc-wrapper cache, used when extra_toolchains includes rust.
+ARG SCCACHE_VERSION=0.8.2
+RUN curl -fsSL "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+      -o /tmp/sccache.tar.gz \
+    && tar -xzf /tmp/sccache.tar.gz -C /tmp \
+    && install -m 0755 "/tmp/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl/sccache" /usr/local/bin/sccache \
+    && rm -rf /tmp/sccache.tar.gz "/tmp/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl" \
+    && /usr/local/bin/sccache --version
+
 # Emscripten SDK — baked at a stable absolute path /emsdk so consumer
 # builds get a deterministic emcc location (the inline `setup-emsdk@v13`
 # path embeds a per-run UUID, which defeats ccache hashing — that was

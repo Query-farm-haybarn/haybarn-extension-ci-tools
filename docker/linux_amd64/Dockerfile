@@ -28,6 +28,18 @@ RUN curl -fsSL "https://github.com/ccache/ccache/releases/download/v${CCACHE_VER
     && install -m 0755 "/tmp/ccache-${CCACHE_VERSION}-linux-x86_64-musl-static/ccache" /usr/local/bin/ccache \
     && rm -rf /tmp/ccache.tar.xz "/tmp/ccache-${CCACHE_VERSION}-linux-x86_64-musl-static" \
     && /usr/local/bin/ccache --version
+
+# sccache — Rust rustc-wrapper cache. Same musl-static rationale as ccache:
+# manylinux_2_28 has glibc 2.28; sccache's glibc tarball would conflict.
+# Wired into builds via RUSTC_WRAPPER=sccache + SCCACHE_WEBDAV_ENDPOINT
+# pointed at the haybarn-vcpkg-cache worker (sccache/... keyspace).
+ARG SCCACHE_VERSION=0.8.2
+RUN curl -fsSL "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+      -o /tmp/sccache.tar.gz \
+    && tar -xzf /tmp/sccache.tar.gz -C /tmp \
+    && install -m 0755 "/tmp/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl/sccache" /usr/local/bin/sccache \
+    && rm -rf /tmp/sccache.tar.gz "/tmp/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl" \
+    && /usr/local/bin/sccache --version
 RUN yum install -y java-11-openjdk-devel maven
 RUN yum install -y wget
 RUN yum install -y kernel-headers

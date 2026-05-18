@@ -17,6 +17,11 @@ publish flow. Run from the deploy workflow with these env vars set:
   HAYBARN_METADATA  path to the unsigned haybarn-metadata.json blob to
                     embed in the leaf's package.json top-level "haybarn"
                     object
+  LICENSE           (optional) SPDX license string for the package.json
+                    `license` field. Defaults to "MIT" (matches the
+                    Haybarn engine + core extensions). Community
+                    extensions should pass their descriptor's `extension.license`
+                    so npm metadata reflects the actual upstream license.
 
 The leaf carries a single .duckdb_extension binary in bin/. Platform-
 pinned via npm's `os`/`cpu`/`libc` so npm installs only the matching leaf.
@@ -84,7 +89,10 @@ def main() -> int:
             "type": "git",
             "url": f"git+{repo_url}.git",
         },
-        "license": "MIT",
+        # `or "MIT"` (not `.get(..., "MIT")`) because workflow callers
+        # often pass LICENSE="" rather than unset; we want an empty string
+        # to fall back to the engine default, not propagate.
+        "license": os.environ.get("LICENSE") or "MIT",
         "os": [host_os],
         "cpu": [host_cpu],
         # bin/ contains the .duckdb_extension(.gz). Haybarn engine

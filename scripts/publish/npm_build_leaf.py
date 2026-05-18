@@ -174,11 +174,23 @@ def main() -> int:
 
     ext_source_repo = os.environ.get("EXTENSION_SOURCE_REPO", "").strip()
 
+    # `repository.url` MUST stay pointed at the GitHub repo this build ran
+    # in — that's what the npm provenance attestation references, and a
+    # mismatch causes publish to fail with E422. So community packages
+    # keep `repository` pointing at haybarn-community-extensions. The
+    # `homepage` (most prominent link on npmjs.com) AND `bugs` go to the
+    # upstream extension repo when we know it — extension authors get the
+    # attribution they deserve, users land at the right place to file
+    # bugs or read upstream docs.
+    homepage_url = ext_source_repo or repo_url
+    bugs_url = f"{ext_source_repo}/issues" if ext_source_repo else f"{repo_url}/issues"
+
     spec = {
         "name": pkg,
         "version": version,
         "description": desc,
-        "homepage": repo_url,
+        "homepage": homepage_url,
+        "bugs": {"url": bugs_url},
         "repository": {
             "type": "git",
             "url": f"git+{repo_url}.git",

@@ -190,6 +190,13 @@ def main() -> int:
     extension_description = os.environ.get("EXTENSION_DESCRIPTION", "").strip()
     ext_source_repo = os.environ.get("EXTENSION_SOURCE_REPO", "").strip()
 
+    # See npm_build_leaf.py for the rationale: `repository` stays pointed
+    # at the GitHub repo where the build ran (npm provenance requirement),
+    # but `homepage` + `bugs` go to the upstream extension repo when we
+    # know it, so npmjs.com attributes the package to its actual author.
+    homepage_url = ext_source_repo or repo_url
+    bugs_url = f"{ext_source_repo}/issues" if ext_source_repo else f"{repo_url}/issues"
+
     spec = {
         "name": pkg,
         "version": version,
@@ -199,7 +206,8 @@ def main() -> int:
             f"{haybarn_version}. Install this meta-package; npm will pull "
             "only the binary leaf matching your platform."
         ),
-        "homepage": repo_url,
+        "homepage": homepage_url,
+        "bugs": {"url": bugs_url},
         "repository": {
             "type": "git",
             "url": f"git+{repo_url}.git",

@@ -1465,6 +1465,13 @@ jobs:
           SCCACHE_WEBDAV_ENDPOINT=https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/sccache/
           SCCACHE_WEBDAV_TOKEN=${{ secrets.vcpkg_token }}
           CARGO_INCREMENTAL=0
+          # Haybarn: forward both the binary-package cache (R2 HTTP backend)
+          # and the source-tarball asset cache into the container. The Linux
+          # Docker path forwards both at line 497; this wasm prebuilt-image
+          # path only forwarded the asset cache before, so vcpkg inside the
+          # container couldn't find pre-built binaries and rebuilt every
+          # package from source on every leg.
+          VCPKG_BINARY_SOURCES=$VCPKG_BINARY_SOURCES
           X_VCPKG_ASSET_SOURCES=$X_VCPKG_ASSET_SOURCES
           DUCKDB_PLATFORM=${{ matrix.duckdb_arch }}
           DUCKDB_GIT_VERSION=${{ inputs.duckdb_version }}

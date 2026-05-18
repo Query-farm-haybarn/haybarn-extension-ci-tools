@@ -83,6 +83,13 @@ def render_leaf_readme(
         f"Platform-specific binary for the **{extension}** extension on **{plat}**, "
         f"built against [Haybarn]({HAYBARN_REPO_URL}) **{haybarn_version}**.",
         "",
+    ]
+    if ext_source_repo:
+        parts += [
+            f"> **Source:** [{ext_source_repo}]({ext_source_repo})",
+            "",
+        ]
+    parts += [
         "## You probably don't want to install this directly",
         "",
         f"Install the meta-package instead — npm will resolve to exactly the "
@@ -101,8 +108,6 @@ def render_leaf_readme(
             f"- [Haybarn community extensions]({HAYBARN_COMMUNITY_REPO_URL}) "
             f"— the catalog this leaf was built and published from"
         )
-    if ext_source_repo:
-        parts.append(f"- [Extension source]({ext_source_repo}) — upstream of `{extension}`")
     parts += [
         "",
         "## Trademark",

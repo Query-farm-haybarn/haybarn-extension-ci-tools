@@ -41,6 +41,13 @@ import sys
 import zipfile
 
 HOMEPAGE = "https://github.com/Query-farm-haybarn/haybarn-community-extensions"
+# CATALOG_HOMEPAGE is the haybarn-community-extensions repo URL — used
+# for `Project-URL: Catalog` so users can find the broader catalog. The
+# primary `Home-page:` and the `Source` project-URL go to the upstream
+# extension's own repo when we know it (see --source-repo). Doing this
+# gives extension authors prominent attribution on the PyPI project
+# page rather than redirecting every visitor to our catalog repo.
+CATALOG_HOMEPAGE = HOMEPAGE
 
 
 def haybarn_suffix(haybarn_version: str) -> str:
@@ -89,6 +96,7 @@ def build_wheel(
     readme: bytes,
     license_text: bytes,
     out_dir: pathlib.Path,
+    source_repo: str = "",
 ) -> pathlib.Path:
     display, normalized = package_names(extension, haybarn_version)
     distinfo = f"{normalized}-{version}.dist-info"
@@ -121,12 +129,17 @@ def build_wheel(
     # extension. The package-name suffix `-h<M>-<m>-<p>` still pins the
     # haybarn ABI for users who care; the engine itself verifies the RSA
     # signature on load anyway.
+    # When source_repo is known, it becomes the primary Home-page (most
+    # prominent link on pypi.org) plus Source + Issues project-URLs. The
+    # community-extensions repo stays linked as Catalog so users can find
+    # the wider context.
+    primary_home = source_repo or CATALOG_HOMEPAGE
     metadata_lines = [
         "Metadata-Version: 2.1",
         f"Name: {display}",
         f"Version: {version}",
         f"Summary: {summary}",
-        f"Home-page: {HOMEPAGE}",
+        f"Home-page: {primary_home}",
         "License: MIT",
         "License-File: LICENSE",
         "Requires-Python: >=3.8",
@@ -137,8 +150,13 @@ def build_wheel(
         "Classifier: Operating System :: Microsoft :: Windows",
         "Classifier: Programming Language :: Python :: 3",
         "Classifier: Topic :: Database",
-        f"Project-URL: Homepage, {HOMEPAGE}",
-        f"Project-URL: Source, {HOMEPAGE}",
+        f"Project-URL: Homepage, {primary_home}",
+        f"Project-URL: Source, {source_repo or CATALOG_HOMEPAGE}",
+    ]
+    if source_repo:
+        metadata_lines.append(f"Project-URL: Issues, {source_repo}/issues")
+    metadata_lines += [
+        f"Project-URL: Catalog, {CATALOG_HOMEPAGE}",
         "",
     ]
     metadata_header = ("\n".join(metadata_lines) + "\n").encode()
@@ -203,6 +221,14 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--license",         type=pathlib.Path, default=None,
                     dest="license_path")
     ap.add_argument("--out-dir",         required=True, type=pathlib.Path)
+    ap.add_argument("--source-repo",     default="",
+                    help="Upstream extension source repo URL (e.g. "
+                         "https://github.com/duckdb/extension-template). "
+                         "When provided, becomes the Home-page + Source + "
+                         "Issues project-URLs in PyPI metadata so the "
+                         "extension's actual author gets attribution on "
+                         "pypi.org rather than redirecting visitors to "
+                         "the Haybarn community-extensions catalog repo.")
     args = ap.parse_args(argv)
 
     if not args.binary.is_file():
@@ -227,6 +253,7 @@ def main(argv: list[str]) -> int:
         readme=readme,
         license_text=license_text,
         out_dir=args.out_dir,
+        source_repo=args.source_repo,
     )
     return 0
 

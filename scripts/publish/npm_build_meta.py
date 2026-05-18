@@ -18,6 +18,11 @@ the deploy workflow with:
                     dropped rather than declared with a missing version).
                     Each entry is just the leaf slug, e.g.
                     "linux-x64,linux-arm64,darwin-arm64".
+  LICENSE           (optional) SPDX license string for the package.json
+                    `license` field. Defaults to "MIT" (engine + core).
+                    Community extensions pass their descriptor's
+                    `extension.license` so npm metadata reflects the
+                    actual upstream license rather than misattributing it.
 
 The meta declares per-platform leaves under optionalDependencies, plus
 an exact peerDependency on haybarn matching the package-name suffix.
@@ -77,7 +82,10 @@ def main() -> int:
             "type": "git",
             "url": f"git+{repo_url}.git",
         },
-        "license": "MIT",
+        # `or "MIT"` (not `.get(..., "MIT")`) because workflow callers
+        # often pass LICENSE="" rather than unset; we want an empty string
+        # to fall back to the engine default, not propagate.
+        "license": os.environ.get("LICENSE") or "MIT",
         "keywords": ["haybarn", "duckdb", "extension", extension],
         # peerDependencies intentionally omitted for now. The `haybarn`
         # package on npm only has pre-release versions (1.5.2-rcN); a

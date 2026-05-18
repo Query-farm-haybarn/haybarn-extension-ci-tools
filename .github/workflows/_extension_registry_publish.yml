@@ -84,6 +84,19 @@ on:
         required: false
         type: string
         default: ''
+      # One-line description from the extension's descriptor — used
+      # in the generated README.md and package.json `description` field.
+      extension_description:
+        required: false
+        type: string
+        default: ''
+      # Upstream extension source repo URL, e.g.
+      # https://github.com/duckdb/extension-template — shown as a link
+      # in the generated README.
+      extension_source_repo:
+        required: false
+        type: string
+        default: ''
     secrets:
       HAYBARN_PYPI_TOKEN:
         required: true
@@ -353,6 +366,9 @@ jobs:
           # Pass-through to npm_build_meta.py for the `license` field in
           # the generated package.json. Empty → script defaults to "MIT".
           LICENSE:           ${{ inputs.extension_license }}
+          # README generation inputs (description + upstream repo link).
+          EXTENSION_DESCRIPTION:  ${{ inputs.extension_description }}
+          EXTENSION_SOURCE_REPO:  ${{ inputs.extension_source_repo }}
         shell: bash
         run: |
           set -euo pipefail

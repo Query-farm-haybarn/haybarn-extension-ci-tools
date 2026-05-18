@@ -90,6 +90,26 @@ def render_meta_readme(
         f"Haybarn {haybarn_version}, distributed on npm as a single meta-package "
         f"that resolves to the correct per-platform binary at install time.",
         '',
+    ]
+    # Hoist source + catalog links high — these are the entry points readers
+    # actually want, not the install snippet.
+    if ext_source_repo:
+        parts += [
+            f"> **Source:** [{ext_source_repo}]({ext_source_repo})  ",
+        ]
+        if is_community:
+            parts.append(
+                f"> **Catalog:** [Haybarn community extensions]"
+                f"({HAYBARN_COMMUNITY_REPO_URL})"
+            )
+        parts.append('')
+    elif is_community:
+        parts += [
+            f"> **Catalog:** [Haybarn community extensions]"
+            f"({HAYBARN_COMMUNITY_REPO_URL})",
+            '',
+        ]
+    parts += [
         '## Install',
         '',
         install_block,
@@ -110,21 +130,10 @@ def render_meta_readme(
         f"from a Haybarn SQL session:",
         '',
         '```sql',
-        f"LOAD '{extension}';",
+        # `LOAD` takes an identifier, not a quoted string — match DuckDB
+        # syntax exactly so the snippet copy-pastes cleanly.
+        f"LOAD {extension};",
         '```',
-        '',
-        '## Links',
-        '',
-        f"- [Haybarn]({HAYBARN_REPO_URL}) — the engine",
-    ]
-    if is_community:
-        parts.append(
-            f"- [Haybarn community extensions]({HAYBARN_COMMUNITY_REPO_URL}) "
-            f"— the catalog this extension was built and published from"
-        )
-    if ext_source_repo:
-        parts.append(f"- [Extension source]({ext_source_repo}) — upstream of `{extension}`")
-    parts += [
         '',
         '## License',
         '',

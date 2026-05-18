@@ -997,6 +997,46 @@ jobs:
       COMMON_CMAKE_VARS: "-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
 
     steps:
+      # Haybarn: disable Windows Defender real-time monitoring + add path
+      # exclusions for the dirs we touch heavily (rtools install, vcpkg
+      # buildtrees, chocolatey installs, the workspace). Small-file-IO is
+      # the dominant cost on the Windows-mingw leg (rtools install alone
+      # spends ~2:48 of dead-air installing thousands of files; Defender
+      # callbacks on every write add up). Status is logged before and
+      # after the disable attempt: stock Defender flips
+      # RealTimeProtectionEnabled to False; MDE (tamper-protected, deployed
+      # to some GHA runner pools) silently no-ops the disable but still
+      # respects exclusion paths, so we add those as a belt-and-suspenders.
+      - name: Disable Defender real-time scan + add path exclusions
+        shell: pwsh
+        run: |
+          Write-Host "::group::Defender state BEFORE"
+          Get-MpComputerStatus | Select-Object `
+            RealTimeProtectionEnabled, IsTamperProtected, `
+            AntispywareEnabled, AntivirusEnabled, `
+            AMServiceEnabled, AMEngineVersion, AMProductVersion, `
+            IoavProtectionEnabled, OnAccessProtectionEnabled `
+            | Format-List
+          Write-Host "::endgroup::"
+          try {
+            Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction Stop
+            Write-Host "Set-MpPreference: ok"
+          } catch {
+            Write-Host "Set-MpPreference threw (likely MDE-tamper-protected): $_"
+          }
+          try {
+            Add-MpPreference -ExclusionPath 'C:\rtools42','C:\rtools43','C:\rtools44','D:\a','C:\ProgramData\Chocolatey' -ErrorAction Stop
+            Write-Host "Add-MpPreference exclusions: ok"
+          } catch {
+            Write-Host "Add-MpPreference threw: $_"
+          }
+          Write-Host "::group::Defender state AFTER"
+          Get-MpComputerStatus | Select-Object `
+            RealTimeProtectionEnabled, IsTamperProtected `
+            | Format-List
+          Get-MpPreference | Select-Object -ExpandProperty ExclusionPath
+          Write-Host "::endgroup::"
+
       - name: Downgrade AWS cli
         shell: powershell
         if: ${{ (contains(format(';{0};', inputs.extra_toolchains), ';downgraded_aws_cli;')) }}

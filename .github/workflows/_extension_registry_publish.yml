@@ -73,6 +73,17 @@ on:
         required: false
         type: string
         default: ''
+      # SPDX license string for the published npm meta package.json
+      # (passed as the LICENSE env var to npm_build_meta.py). Empty
+      # string falls back to "MIT" — that's what the engine + core
+      # extensions use, where the hardcoded default lived before. The
+      # community-extensions caller passes the descriptor's
+      # `extension.license` here so npm metadata reflects the upstream
+      # extension's license rather than misattributing it as MIT.
+      extension_license:
+        required: false
+        type: string
+        default: ''
     secrets:
       HAYBARN_PYPI_TOKEN:
         required: true
@@ -339,6 +350,9 @@ jobs:
           EXT_VERSION_LABEL: ${{ inputs.extension_version_label }}
           PRESENT_LEAVES:    ${{ steps.leaves.outputs.present_leaves }}
           META_PKG:          ${{ steps.leaves.outputs.meta_pkg }}
+          # Pass-through to npm_build_meta.py for the `license` field in
+          # the generated package.json. Empty → script defaults to "MIT".
+          LICENSE:           ${{ inputs.extension_license }}
         shell: bash
         run: |
           set -euo pipefail

@@ -23,6 +23,13 @@ the deploy workflow with:
                     Community extensions pass their descriptor's
                     `extension.license` so npm metadata reflects the
                     actual upstream license rather than misattributing it.
+  EXTENSION_DESCRIPTION    (optional) one-line description from the
+                           upstream descriptor — included in the README.
+                           Falls back to a generic blurb.
+  EXTENSION_SOURCE_REPO    (optional) upstream extension's source repo
+                           URL (e.g. https://github.com/<owner>/<repo>),
+                           shown as a link in the meta README. Empty →
+                           omitted.
 
 The meta declares per-platform leaves under optionalDependencies, plus
 an exact peerDependency on haybarn matching the package-name suffix.
@@ -32,6 +39,106 @@ import json
 import os
 import pathlib
 import sys
+
+
+# Stable Haybarn icon URL — public-readable raw GitHub asset on the
+# org's `.github` profile repo. If this is ever moved, update both
+# npm_build_leaf.py and npm_build_meta.py in lockstep.
+HAYBARN_ICON_URL = (
+    "https://raw.githubusercontent.com/Query-farm-haybarn/.github/"
+    "haybarn/profile/assets/haybarn-icon.png"
+)
+HAYBARN_REPO_URL = "https://github.com/Query-farm-haybarn/haybarn"
+HAYBARN_COMMUNITY_REPO_URL = (
+    "https://github.com/Query-farm-haybarn/haybarn-community-extensions"
+)
+
+
+def render_meta_readme(
+    pkg: str,
+    version: str,
+    extension: str,
+    haybarn_version: str,
+    extension_description: str,
+    ext_source_repo: str,
+    license_id: str,
+    present_leaves: list,
+    is_community: bool,
+) -> str:
+    """Rich README for the user-facing meta-package."""
+    install_block = (
+        f"```sh\n"
+        f"npm install {pkg}\n"
+        f"# or use the exact version:\n"
+        f"npm install {pkg}@{version}\n"
+        f"```"
+    )
+    leaves_md = "\n".join(
+        f"- `@haybarn/ext-{extension}-h{haybarn_version.replace('.', '-')}-{slug}`"
+        for slug in present_leaves
+    ) or "_(no platform leaves were built this run)_"
+
+    parts = [
+        '<p align="center">',
+        f'  <img src="{HAYBARN_ICON_URL}" alt="Haybarn" width="120" height="120">',
+        '</p>',
+        '',
+        f"# Haybarn extension: `{extension}`",
+        '',
+        extension_description or
+        f"The `{extension}` extension for Haybarn — built and signed against "
+        f"Haybarn {haybarn_version}, distributed on npm as a single meta-package "
+        f"that resolves to the correct per-platform binary at install time.",
+        '',
+        '## Install',
+        '',
+        install_block,
+        '',
+        f"npm picks the matching platform binary from the leaves below via "
+        f"its `os` / `cpu` / `libc` fields. No postinstall scripts, no network "
+        f"calls after `npm install`.",
+        '',
+        '## Available platforms (this version)',
+        '',
+        leaves_md,
+        '',
+        '## Use it',
+        '',
+        f"Once installed, the `.duckdb_extension` binary lands in your project's "
+        f"`node_modules/` tree under the matching leaf. The "
+        f"[Haybarn]({HAYBARN_REPO_URL}) engine auto-discovers it at startup; "
+        f"from a Haybarn SQL session:",
+        '',
+        '```sql',
+        f"LOAD '{extension}';",
+        '```',
+        '',
+        '## Links',
+        '',
+        f"- [Haybarn]({HAYBARN_REPO_URL}) — the engine",
+    ]
+    if is_community:
+        parts.append(
+            f"- [Haybarn community extensions]({HAYBARN_COMMUNITY_REPO_URL}) "
+            f"— the catalog this extension was built and published from"
+        )
+    if ext_source_repo:
+        parts.append(f"- [Extension source]({ext_source_repo}) — upstream of `{extension}`")
+    parts += [
+        '',
+        '## License',
+        '',
+        (f"The `{extension}` extension is distributed under **{license_id}**. "
+         "The Haybarn engine itself is MIT-licensed."),
+        '',
+        '## Trademark',
+        '',
+        "Haybarn is an independent derived distribution of DuckDB published by "
+        "[Query Farm LLC](https://query.farm). Not affiliated with or endorsed by "
+        "the DuckDB Foundation. DuckDB is a trademark of the DuckDB Foundation.",
+        '',
+    ]
+    return "\n".join(parts)
 
 
 def main() -> int:
@@ -68,11 +175,17 @@ def main() -> int:
     repo_slug = os.environ.get("GITHUB_REPOSITORY",
                                "Query-farm-haybarn/haybarn-community-extensions")
     repo_url = f"https://github.com/{repo_slug}"
+    is_community = repo_slug.endswith("/haybarn-community-extensions")
+
+    license_id = os.environ.get("LICENSE") or "MIT"
+    extension_description = os.environ.get("EXTENSION_DESCRIPTION", "").strip()
+    ext_source_repo = os.environ.get("EXTENSION_SOURCE_REPO", "").strip()
 
     spec = {
         "name": pkg,
         "version": version,
         "description": (
+            extension_description or
             f"Haybarn extension {extension!r} — built against haybarn "
             f"{haybarn_version}. Install this meta-package; npm will pull "
             "only the binary leaf matching your platform."
@@ -85,7 +198,7 @@ def main() -> int:
         # `or "MIT"` (not `.get(..., "MIT")`) because workflow callers
         # often pass LICENSE="" rather than unset; we want an empty string
         # to fall back to the engine default, not propagate.
-        "license": os.environ.get("LICENSE") or "MIT",
+        "license": license_id,
         "keywords": ["haybarn", "duckdb", "extension", extension],
         # peerDependencies intentionally omitted for now. The `haybarn`
         # package on npm only has pre-release versions (1.5.2-rcN); a
@@ -95,12 +208,27 @@ def main() -> int:
         # verifies the RSA signature on load.
         "optionalDependencies": optional,
         "haybarn": metadata_blob,
+        # README.md ships with the package so npm's web UI renders the
+        # logo + description + repo links the user installs against.
+        "files": ["README.md"],
         "publishConfig": {"access": "public"},
     }
 
     out = stage / "package.json"
     out.write_text(json.dumps(spec, indent=2) + "\n")
     print(f"wrote {out}")
+
+    readme = render_meta_readme(
+        pkg=pkg, version=version, extension=extension,
+        haybarn_version=haybarn_version,
+        extension_description=extension_description,
+        ext_source_repo=ext_source_repo,
+        license_id=license_id, present_leaves=present_leaves,
+        is_community=is_community,
+    )
+    readme_out = stage / "README.md"
+    readme_out.write_text(readme)
+    print(f"wrote {readme_out}")
     return 0
 
 

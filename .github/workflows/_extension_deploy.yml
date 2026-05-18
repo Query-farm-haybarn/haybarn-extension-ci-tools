@@ -111,10 +111,14 @@ jobs:
         # would fail with "pathspec '...' did not match any file(s) known to git".
         # The clone target matches the override_duckdb_repository default used by
         # _extension_distribution.yml's build job.
+        #
+        # Force-replace any existing `duckdb/` directory the caller's checkout
+        # may have brought in via submodule init (the haybarn-httpfs repo has a
+        # `duckdb/` submodule pointing at upstream duckdb/duckdb, which would
+        # otherwise survive into this step and prevent the haybarn-engine clone).
         run: |
-          if [ ! -d duckdb ]; then
-            git clone https://github.com/Query-farm-haybarn/haybarn.git duckdb
-          fi
+          rm -rf duckdb
+          git clone https://github.com/Query-farm-haybarn/haybarn.git duckdb
           cd duckdb
           git fetch --tags
           git checkout ${{ inputs.duckdb_version }}

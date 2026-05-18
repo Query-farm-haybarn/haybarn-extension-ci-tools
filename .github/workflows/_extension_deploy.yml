@@ -120,12 +120,32 @@ jobs:
 
       - name: Deploy
         shell: bash
+        # Haybarn: route uploads at the Haybarn R2 bucket using the engine-shared
+        # secret names. Matches what Query-farm-haybarn/haybarn/.github/workflows/haybarn-extensions.yml
+        # uses for core extension publishing (R2_* + HAYBARN_EXTENSION_SIGNING_PK,
+        # bucket suffix `/core`). The upstream secret names
+        # (DUCKDB_EXTENSIONS_NIGHTLY_S3_*, S3_DUCKDB_ORG_EXTENSION_SIGNING_PK)
+        # aren't set in Haybarn build-fork repos, so the old version silently
+        # no-op'd via extension-upload-single.sh's "No AWS key found, skipping.."
+        # branch — leaving the deploy job green but uploading nothing.
         env:
-          AWS_ENDPOINT_URL: ${{ secrets.DUCKDB_EXTENSIONS_NIGHTLY_S3_ENDPOINT }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.DUCKDB_EXTENSIONS_NIGHTLY_S3_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.DUCKDB_EXTENSIONS_NIGHTLY_S3_KEY }}
-          BUCKET_NAME: 'duckdb-extensions-nightly'
-          DUCKDB_EXTENSION_SIGNING_PK: ${{ secrets.S3_DUCKDB_ORG_EXTENSION_SIGNING_PK }}
+          AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          # NOTE: org secret is `R2_SECRET_KEY_ID`, not `R2_SECRET_ACCESS_KEY` —
+          # matches the engine workflow at haybarn-extensions.yml:125.
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_KEY_ID }}
+          AWS_DEFAULT_REGION: auto
+          # Cloudflare R2 rejects new sigv4 checksum headers introduced in
+          # awscli >= 1.36 / v2 >= 2.23 (surfaces as AccessDenied on PutObject).
+          # Pin to pre-2024 checksum behavior.
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          # Core-extension URL layout is `<bucket>/core/...`, matching the
+          # haybarn engine's haybarn-extensions.yml:146. The upload script's
+          # $5 (bucket name) accepts "<bucket>/<prefix>" because aws s3 cp
+          # treats anything after the bucket as the object key.
+          BUCKET_NAME: ${{ secrets.R2_BUCKET }}/core
+          DUCKDB_EXTENSION_SIGNING_PK: ${{ secrets.HAYBARN_EXTENSION_SIGNING_PK }}
           DUCKDB_DEPLOY_SCRIPT_MODE: for_real
           PIP_BREAK_SYSTEM_PACKAGES: 1
         run: |

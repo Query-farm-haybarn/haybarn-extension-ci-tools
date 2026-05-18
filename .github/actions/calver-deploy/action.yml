@@ -1,0 +1,157 @@
+name: Haybarn CalVer Deploy
+description: |
+  Upload a built Haybarn extension binary to R2 with CalVer versioning,
+  haybarn-engine-tag normalization, and a short Cache-Control on the
+  rolling-latest path so Cloudflare's edge serves fresh deploys within
+  seconds instead of the zone default 4h.
+
+  Encapsulates the deploy-side logic that every haybarn-* extension needs
+  identically. Designed to be called from _extension_deploy.yml or
+  directly from any workflow that produces a `/tmp/extension/<name>.duckdb_extension(.wasm)`
+  artifact and has the R2 / signing credentials in env.
+
+  Expects in the calling job environment:
+    - AWS_ENDPOINT_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (R2 creds)
+    - AWS_DEFAULT_REGION, AWS_REQUEST_CHECKSUM_CALCULATION, AWS_RESPONSE_CHECKSUM_VALIDATION
+    - BUCKET_NAME (form: "<bucket>/<prefix>", e.g. "<bucket>/core")
+    - DUCKDB_EXTENSION_SIGNING_PK (RSA signing key)
+    - DUCKDB_DEPLOY_SCRIPT_MODE=for_real
+    - `./duckdb/` directory checked out at the engine tag (provides
+      `scripts/extension-upload-single.sh`)
+    - `/tmp/extension/` populated with the built extension binary
+
+inputs:
+  extension_name:
+    description: Extension name, e.g. "httpfs".
+    required: true
+  duckdb_arch:
+    description: Target arch slug, e.g. "osx_arm64" or "wasm_mvp".
+    required: true
+  deploy_latest:
+    description: Write the rolling-latest path (mutable, short TTL).
+    required: false
+    default: 'false'
+  deploy_versioned:
+    description: Write the CalVer-pinned path (immutable, long TTL).
+    required: false
+    default: 'true'
+  deploy_script:
+    description: |
+      Path to the underlying upload script. Defaults to the engine's
+      extension-upload-single.sh, but can be overridden for extensions
+      that need custom upload behavior.
+    required: false
+    default: './duckdb/scripts/extension-upload-single.sh'
+
+outputs:
+  ext_version:
+    description: Resolved CalVer-style EXT_VERSION (YYYYMM.DD.HHMMSS).
+    value: ${{ steps.derive.outputs.ext_version }}
+  duckdb_version:
+    description: Resolved DUCKDB_VERSION (normalized for URL segment).
+    value: ${{ steps.derive.outputs.duckdb_version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install awscli
+      shell: bash
+      env:
+        PIP_BREAK_SYSTEM_PACKAGES: '1'
+      run: |
+        python3 -m pip install --quiet awscli
+        git config --global --add safe.directory '*'
+
+    - name: Derive DUCKDB_VERSION + EXT_VERSION
+      id: derive
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # ----------------------------------------------------------------
+        # DUCKDB_VERSION = URL path segment. The Haybarn engine fork ships
+        # tags like haybarn-v1.5.2-rc13, but haybarn-cli's engine resolves
+        # `INSTALL <ext>` against
+        #   <repo>/${library_version}/${platform}/${name}.duckdb_extension
+        # where library_version is the plain semver "v1.5.2". Normalize.
+        cd duckdb
+        git fetch --tags --no-recurse-submodules
+        raw_duckdb_version=$(git tag --points-at HEAD | head -1)
+        raw_duckdb_version=${raw_duckdb_version:-$(git log -1 --format=%h)}
+        case "${raw_duckdb_version}" in
+          haybarn-v*-rc*)
+            DUCKDB_VERSION="${raw_duckdb_version#haybarn-}"
+            DUCKDB_VERSION="${DUCKDB_VERSION%-rc*}"
+            ;;
+          haybarn-v*)
+            DUCKDB_VERSION="${raw_duckdb_version#haybarn-}"
+            ;;
+          *)
+            DUCKDB_VERSION="${raw_duckdb_version}"
+            ;;
+        esac
+        cd ..
+
+        # ----------------------------------------------------------------
+        # EXT_VERSION = CalVer (YYYYMM.DD.HHMMSS) from extension repo HEAD.
+        # Matches haybarn-extension-ci-tools/scripts/publish/compute_calver.py.
+        # Idempotent: same commit ts produces the same version.
+        git fetch --tags --no-recurse-submodules
+        commit_ts=$(git log -1 --format=%ct HEAD)
+        EXT_VERSION=$(python3 - "$commit_ts" <<'PY'
+        import datetime as dt, sys
+        ts = int(sys.argv[1])
+        t = dt.datetime.fromtimestamp(ts, tz=dt.timezone.utc)
+        print(f"{t.year * 100 + t.month}.{t.day}.{t.hour * 10000 + t.minute * 100 + t.second}")
+        PY
+        )
+
+        echo "duckdb_version=${DUCKDB_VERSION}" >> "$GITHUB_OUTPUT"
+        echo "ext_version=${EXT_VERSION}"       >> "$GITHUB_OUTPUT"
+        echo "::notice::deploying ${{ inputs.extension_name }} CalVer ${EXT_VERSION} for engine library_version=${DUCKDB_VERSION} (commit_ts=${commit_ts})"
+
+    - name: Upload via underlying script
+      shell: bash
+      env:
+        EXT_VERSION:    ${{ steps.derive.outputs.ext_version }}
+        DUCKDB_VERSION: ${{ steps.derive.outputs.duckdb_version }}
+      run: |
+        set -euo pipefail
+        "${{ inputs.deploy_script }}" \
+          "${{ inputs.extension_name }}" \
+          "$EXT_VERSION" \
+          "$DUCKDB_VERSION" \
+          "${{ inputs.duckdb_arch }}" \
+          "$BUCKET_NAME" \
+          "${{ inputs.deploy_latest }}" \
+          "${{ inputs.deploy_versioned }}"
+
+    - name: Patch Cache-Control on rolling-latest path
+      if: ${{ inputs.deploy_latest == 'true' }}
+      shell: bash
+      env:
+        DUCKDB_VERSION: ${{ steps.derive.outputs.duckdb_version }}
+      run: |
+        set -euo pipefail
+        # The engine's extension-upload-single.sh (at the pinned tag) does
+        # NOT pass --cache-control on aws s3 cp, so R2 stores objects with
+        # no Cache-Control and Cloudflare's zone default (4h) keeps stale
+        # binaries on the edge for hours after publish. Patch the metadata
+        # on the rolling-latest path only; versioned paths are immutable.
+        # Sunsets once the engine ships an RC with --cache-control baked
+        # into the upload script.
+        case "${{ inputs.duckdb_arch }}" in
+          wasm*) suffix="wasm"; ctype="application/wasm" ;;
+          *)     suffix="gz";   ctype="application/gzip" ;;
+        esac
+        bucket_root="${BUCKET_NAME%%/*}"
+        latest_key="${BUCKET_NAME#*/}/${DUCKDB_VERSION}/${{ inputs.duckdb_arch }}/${{ inputs.extension_name }}.duckdb_extension.${suffix}"
+        echo "::notice::setting Cache-Control max-age=10 on s3://${bucket_root}/${latest_key}"
+        aws s3api copy-object \
+          --bucket "${bucket_root}" \
+          --key "${latest_key}" \
+          --copy-source "${bucket_root}/${latest_key}" \
+          --metadata-directive REPLACE \
+          --cache-control "public, max-age=10, must-revalidate" \
+          --content-type "${ctype}" \
+          >/dev/null

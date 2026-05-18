@@ -105,11 +105,18 @@ jobs:
           submodules: 'recursive'
 
       - name: Checkout DuckDB to version
+        # Haybarn: clone the Haybarn engine fork rather than upstream duckdb/duckdb.
+        # Required because duckdb_version may be a Haybarn-specific tag (e.g.
+        # haybarn-v1.5.2-rc13) that doesn't exist on the upstream remote — checkout
+        # would fail with "pathspec '...' did not match any file(s) known to git".
+        # The clone target matches the override_duckdb_repository default used by
+        # _extension_distribution.yml's build job.
         run: |
           if [ ! -d duckdb ]; then
-            git clone https://github.com/duckdb/duckdb.git
+            git clone https://github.com/Query-farm-haybarn/haybarn.git duckdb
           fi
           cd duckdb
+          git fetch --tags
           git checkout ${{ inputs.duckdb_version }}
 
       - uses: actions/download-artifact@v8

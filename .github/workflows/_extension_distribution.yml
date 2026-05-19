@@ -1540,16 +1540,12 @@ jobs:
           ENABLE_EXTENSION_AUTOINSTALL=1
           ENABLE_EXTENSION_AUTOLOADING=1
           WASM_EXTENSIONS=1
-          # Haybarn: forward USE_MERGED_VCPKG_MANIFEST into the container.
-          # Without it the in-container `make wasm_<v>` sees the var unset,
-          # the makefile's `ifeq (${USE_MERGED_VCPKG_MANIFEST}, 1)` is false
-          # and we fall through to `VCPKG_MANIFEST_DIR='${PROJ_DIR}'` (project
-          # root vcpkg.json) instead of `${PROJ_DIR}build/extension_configuration`
-          # (the merged manifest). Extensions that bring their own vcpkg deps
-          # via their own vcpkg.json — most notably avro-c for the avro
-          # extension — then aren't installed and the extension's CMakeLists
-          # fails at find_path. The Linux Docker path forwards this at
-          # line 507; the wasm prebuilt-image path needs the same.
+          # Haybarn: forward USE_MERGED_VCPKG_MANIFEST into the container so
+          # the in-container make picks up the merged vcpkg manifest produced
+          # by extension_configuration_wasm (rather than dropping back to the
+          # project-root vcpkg.json which omits per-extension deps like
+          # avro-c). The Linux Docker path forwards this at line 507; the
+          # wasm prebuilt-image path needs the same.
           USE_MERGED_VCPKG_MANIFEST=${{ inputs.use_merged_vcpkg_manifest }}
           SUBSET_EXTENSIONS_TESTS=${{ inputs.extensions_test_selection }}
           EOF
@@ -1635,6 +1631,33 @@ jobs:
             -v "$PWD"/ccache_dir:/ccache_dir \
             "${{ steps.wasm_image.outputs.ref }}" \
             bash -lc 'source /emsdk/emsdk_env.sh > /dev/null && make ${{ matrix.duckdb_arch }}'
+
+      # Haybarn: when vcpkg fails to build a port for wasm, the actual
+      # compile-time error is in /vcpkg/buildtrees/<port>/install-<triplet>-*-out.log
+      # inside the container — not surfaced to the workflow log. Dump them on
+      # failure so wasm-port incompatibilities are diagnosable from CI without
+      # having to docker-run locally.
+      - name: Dump vcpkg buildtree logs on failure (wasm Docker path)
+        if: ${{ inputs.use_prebuilt_wasm_image && failure() }}
+        shell: bash
+        run: |
+          docker run --env-file=docker_env.txt \
+            -v "$PWD":/duckdb_build_dir \
+            "${{ steps.wasm_image.outputs.ref }}" \
+            bash -lc '
+              echo "=== vcpkg issue_body.md ==="
+              for f in /duckdb_build_dir/build/${{ matrix.duckdb_arch }}/vcpkg_installed/vcpkg/issue_body.md; do
+                [ -f "$f" ] && { echo "--- $f ---"; cat "$f"; }
+              done
+              echo
+              echo "=== vcpkg buildtree install logs (per port) ==="
+              for log in /vcpkg/buildtrees/*/install-wasm32-emscripten-*-out.log /vcpkg/buildtrees/*/install-wasm32-emscripten-*-err.log; do
+                [ -f "$log" ] || continue
+                echo "--- $log ---"
+                tail -200 "$log"
+                echo
+              done
+            ' || true
 
       - name: ccache stats (wasm Docker path)
         if: ${{ inputs.use_prebuilt_wasm_image && always() }}

@@ -62,7 +62,7 @@ RUN curl -fsSL "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_
 # builds get a deterministic emcc location (the inline `setup-emsdk@v13`
 # path embeds a per-run UUID, which defeats ccache hashing — that was
 # the whole reason for this image existing).
-ARG EMSDK_VERSION=3.1.71
+ARG EMSDK_VERSION=5.0.7
 RUN git clone --depth 1 https://github.com/emscripten-core/emsdk.git /emsdk \
     && cd /emsdk \
     && ./emsdk install ${EMSDK_VERSION} \

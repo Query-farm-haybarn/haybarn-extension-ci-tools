@@ -434,7 +434,11 @@ jobs:
       - name: Checkout DuckDB to version
         if: ${{ inputs.duckdb_version != '' }}
         run: |
-          (cd duckdb && git checkout "${{ inputs.duckdb_version }}")
+          if [ -d duckdb ]; then
+            (cd duckdb && git checkout "${{ inputs.duckdb_version }}")
+          else
+            echo "No duckdb/ directory present; skipping (extension does not vendor the engine, e.g. C API templates)."
+          fi
 
       - name: Tag extension
         if: ${{inputs.extension_tag != ''}}
@@ -789,7 +793,11 @@ jobs:
       - name: Checkout DuckDB to version
         if: ${{ inputs.duckdb_version != '' }}
         run: |
-          (cd duckdb && git checkout "${{ inputs.duckdb_version }}")
+          if [ -d duckdb ]; then
+            (cd duckdb && git checkout "${{ inputs.duckdb_version }}")
+          else
+            echo "No duckdb/ directory present; skipping (extension does not vendor the engine, e.g. C API templates)."
+          fi
 
       - name: Tag extension
         if: ${{inputs.extension_tag != ''}}
@@ -1180,7 +1188,11 @@ jobs:
         if: ${{ inputs.duckdb_version != '' }}
         shell: bash
         run: |
-          (cd duckdb && git checkout "${{ inputs.duckdb_version }}")
+          if [ -d duckdb ]; then
+            (cd duckdb && git checkout "${{ inputs.duckdb_version }}")
+          else
+            echo "No duckdb/ directory present; skipping (extension does not vendor the engine, e.g. C API templates)."
+          fi
 
       - name: Tag extension
         if: ${{inputs.extension_tag != ''}}
@@ -1401,7 +1413,11 @@ jobs:
       - name: Checkout DuckDB to version
         if: ${{ inputs.duckdb_version != '' }}
         run: |
-          (cd duckdb && git checkout "${{ inputs.duckdb_version }}")
+          if [ -d duckdb ]; then
+            (cd duckdb && git checkout "${{ inputs.duckdb_version }}")
+          else
+            echo "No duckdb/ directory present; skipping (extension does not vendor the engine, e.g. C API templates)."
+          fi
 
       - name: Tag extension
         if: ${{inputs.extension_tag != ''}}

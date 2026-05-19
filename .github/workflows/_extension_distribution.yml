@@ -1540,6 +1540,17 @@ jobs:
           ENABLE_EXTENSION_AUTOINSTALL=1
           ENABLE_EXTENSION_AUTOLOADING=1
           WASM_EXTENSIONS=1
+          # Haybarn: forward USE_MERGED_VCPKG_MANIFEST into the container.
+          # Without it the in-container `make wasm_<v>` sees the var unset,
+          # the makefile's `ifeq (${USE_MERGED_VCPKG_MANIFEST}, 1)` is false
+          # and we fall through to `VCPKG_MANIFEST_DIR='${PROJ_DIR}'` (project
+          # root vcpkg.json) instead of `${PROJ_DIR}build/extension_configuration`
+          # (the merged manifest). Extensions that bring their own vcpkg deps
+          # via their own vcpkg.json — most notably avro-c for the avro
+          # extension — then aren't installed and the extension's CMakeLists
+          # fails at find_path. The Linux Docker path forwards this at
+          # line 507; the wasm prebuilt-image path needs the same.
+          USE_MERGED_VCPKG_MANIFEST=${{ inputs.use_merged_vcpkg_manifest }}
           SUBSET_EXTENSIONS_TESTS=${{ inputs.extensions_test_selection }}
           EOF
           echo '${{ inputs.test_config }}' | jq -r '.test_env_variables // {} | to_entries | map("\(.key)=\(.value)") | .[]' >> docker_env.txt

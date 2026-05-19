@@ -1416,10 +1416,10 @@ jobs:
       # Inline toolchain setup — skipped when use_prebuilt_wasm_image is true
       # (in that case emsdk + vcpkg + ccache 4.13.6 all come baked in the
       # ghcr.io/.../haybarn-wasm:<tag> image).
-      - uses: mymindstorm/setup-emsdk@v13
+      - uses: mymindstorm/setup-emsdk@v14
         if: ${{ !inputs.use_prebuilt_wasm_image }}
         with:
-          version: 3.1.71
+          version: 5.0.7
 
       - name: Setup Rust for cross compilation
         if: ${{ (inputs.enable_rust || contains(format(';{0};', inputs.extra_toolchains), ';rust;'))}}

@@ -32,3 +32,8 @@ set(VCPKG_ENV_PASSTHROUGH_UNTRACKED EMSDK PATH)
 set(VCPKG_C_FLAGS "-pthread")
 set(VCPKG_CXX_FLAGS "-pthread")
 set(VCPKG_LINKER_FLAGS "-pthread")
+
+# Release-only: the wasm extensions link the Release dependency libs (lib/*.a);
+# the Debug libs (debug/lib/*.a) vcpkg builds by default are never used here.
+# Skipping them roughly halves vcpkg build time and binary-cache size.
+set(VCPKG_BUILD_TYPE release)

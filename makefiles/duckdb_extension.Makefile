@@ -231,7 +231,13 @@ wasm_eh: wasm_pre_build_step ${EXTENSION_CONFIG_STEP_WASM}
 
 wasm_threads: wasm_pre_build_step ${EXTENSION_CONFIG_STEP_WASM}
 	mkdir -p ./build/wasm_threads
-	emcmake cmake $(GENERATOR) $(EXTENSION_CONFIG_FLAG) $(VCPKG_MANIFEST_FLAGS) $(WASM_COMPILE_TIME_COMMON_FLAGS) $(BUILD_FLAGS) -Bbuild/wasm_threads -DCMAKE_CXX_FLAGS="$(WASM_CXX_THREADS_FLAGS)" -S $(DUCKDB_SRCDIR) -DDUCKDB_EXPLICIT_PLATFORM=wasm_threads -DDUCKDB_CUSTOM_PLATFORM=wasm_threads
+	# USE_WASM_THREADS=1 is what populates duckdb's WASM_THREAD_FLAGS
+	# (-pthread -sSHARED_MEMORY=1), which is appended to the side-module emcc
+	# link in extension_build_tools.cmake. Without it the extension imports a
+	# NON-shared env.memory and fails to link into the shared-memory COI engine.
+	# The -pthread carried in CMAKE_CXX_FLAGS only affects compilation, not that
+	# custom link command, so it is not sufficient on its own.
+	emcmake cmake $(GENERATOR) $(EXTENSION_CONFIG_FLAG) $(VCPKG_MANIFEST_FLAGS) $(WASM_COMPILE_TIME_COMMON_FLAGS) $(BUILD_FLAGS) -Bbuild/wasm_threads -DCMAKE_CXX_FLAGS="$(WASM_CXX_THREADS_FLAGS)" -S $(DUCKDB_SRCDIR) -DDUCKDB_EXPLICIT_PLATFORM=wasm_threads -DDUCKDB_CUSTOM_PLATFORM=wasm_threads -DUSE_WASM_THREADS=1
 	emmake make -j8 -Cbuild/wasm_threads
 
 

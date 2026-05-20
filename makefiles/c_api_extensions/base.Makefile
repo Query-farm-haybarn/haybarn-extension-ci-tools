@@ -199,11 +199,21 @@ output_distribution_matrix:
 #############################################
 ifneq ($(DUCKDB_WASM_PLATFORM),)
 
+# The wasm_threads engine imports a *shared* env.memory, so its side-module
+# extensions must be linked shared too (-pthread implies -sSHARED_MEMORY=1).
+# Linking them non-shared yields a "mismatch in shared state" LinkError at
+# load time. wasm_eh/wasm_mvp are non-shared and must stay that way.
+ifeq ($(DUCKDB_WASM_PLATFORM),wasm_threads)
+WASM_LINK_THREAD_FLAGS=-pthread -sSHARED_MEMORY=1
+else
+WASM_LINK_THREAD_FLAGS=
+endif
+
 link_wasm_debug:
-	emcc $(EXTENSION_BUILD_PATH)/debug/$(EXTENSION_LIB_FILENAME) -o $(EXTENSION_BUILD_PATH)/debug/$(EXTENSION_FILENAME_NO_METADATA) -O3 -g -sSIDE_MODULE=2 -sEXPORTED_FUNCTIONS="_$(EXTENSION_NAME)_init_c_api"
+	emcc $(EXTENSION_BUILD_PATH)/debug/$(EXTENSION_LIB_FILENAME) -o $(EXTENSION_BUILD_PATH)/debug/$(EXTENSION_FILENAME_NO_METADATA) -O3 -g -sSIDE_MODULE=2 -sEXPORTED_FUNCTIONS="_$(EXTENSION_NAME)_init_c_api" $(WASM_LINK_THREAD_FLAGS)
 
 link_wasm_release:
-	emcc $(EXTENSION_BUILD_PATH)/release/$(EXTENSION_LIB_FILENAME) -o $(EXTENSION_BUILD_PATH)/release/$(EXTENSION_FILENAME_NO_METADATA) -O3 -sSIDE_MODULE=2 -sEXPORTED_FUNCTIONS="_$(EXTENSION_NAME)_init_c_api"
+	emcc $(EXTENSION_BUILD_PATH)/release/$(EXTENSION_LIB_FILENAME) -o $(EXTENSION_BUILD_PATH)/release/$(EXTENSION_FILENAME_NO_METADATA) -O3 -sSIDE_MODULE=2 -sEXPORTED_FUNCTIONS="_$(EXTENSION_NAME)_init_c_api" $(WASM_LINK_THREAD_FLAGS)
 
 else
 link_wasm_debug:

@@ -109,6 +109,10 @@ jobs:
   # ------------------------------------------------------------------
   publish_pypi:
     name: Publish PyPI
+    # Temporarily disabled: PyPI uploads are hitting HTTP 429 (rate limit) and
+    # the wheels aren't the priority right now. R2 + npm publish are unaffected.
+    # Re-enable by removing this `if: false` (or wiring a publish_pypi input).
+    if: ${{ false }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read

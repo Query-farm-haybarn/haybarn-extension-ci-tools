@@ -23,15 +23,20 @@ if(NOT DEFINED ENV{EMSDK})
     message(FATAL_ERROR "The EMSDK environment variable must be defined to use the wasm32-emscripten-threads triplet")
 endif()
 
-set(VCPKG_CHAINLOAD_TOOLCHAIN_FILE "$ENV{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake")
+# Chainload a wrapper that include()s Emscripten.cmake and then appends
+# -pthread. We must NOT rely on VCPKG_C_FLAGS=-pthread here: vcpkg sets
+# CMAKE_C_FLAGS from VCPKG_C_FLAGS, but Emscripten.cmake then overwrites it,
+# dropping the flag — so deps compiled WITHOUT atomics/bulk-memory and the
+# wasm_threads --shared-memory link failed. The wrapper appends after the
+# include, where it survives. See wasm32-emscripten-threads-toolchain.cmake.
+set(VCPKG_CHAINLOAD_TOOLCHAIN_FILE "${CMAKE_CURRENT_LIST_DIR}/wasm32-emscripten-threads-toolchain.cmake")
 set(VCPKG_ENV_PASSTHROUGH_UNTRACKED EMSDK PATH)
 
-# -pthread implies -matomics -mbulk-memory at compile time (and shared-memory
-# pthread support at link time). The compile flags are what matter for the
-# static archives vcpkg produces.
-set(VCPKG_C_FLAGS "-pthread")
-set(VCPKG_CXX_FLAGS "-pthread")
-set(VCPKG_LINKER_FLAGS "-pthread")
+# Cache-bust marker. vcpkg's package ABI hashes this triplet file but not
+# necessarily the chainloaded toolchain file's contents — so bump this whenever
+# wasm32-emscripten-threads-toolchain.cmake changes, to force a dependency
+# rebuild instead of restoring stale (e.g. non-atomics) artifacts.
+# pthread-toolchain-abi: 1
 
 # Release-only: the wasm extensions link the Release dependency libs (lib/*.a);
 # the Debug libs (debug/lib/*.a) vcpkg builds by default are never used here.

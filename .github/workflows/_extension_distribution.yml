@@ -1566,7 +1566,7 @@ jobs:
           # Haybarn: forward the vcpkg target triplet + overlay dirs into the
           # container. The Linux Docker path forwards these at lines ~517-519;
           # this wasm prebuilt-image path did not, so the in-container
-          # `make wasm_threads` never passed -DVCPKG_TARGET_TRIPLET and vcpkg
+          # make wasm_threads never passed -DVCPKG_TARGET_TRIPLET and vcpkg
           # fell back to the auto-detected wasm32-emscripten triplet (non-threaded
           # deps) — which cannot link into a shared-memory wasm_threads extension.
           # The mounted workspace is /duckdb_build_dir; ci-tools is checked out

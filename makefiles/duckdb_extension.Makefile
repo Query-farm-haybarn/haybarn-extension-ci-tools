@@ -238,6 +238,13 @@ wasm_threads: wasm_pre_build_step ${EXTENSION_CONFIG_STEP_WASM}
 	# The -pthread carried in CMAKE_CXX_FLAGS only affects compilation, not that
 	# custom link command, so it is not sufficient on its own.
 	emcmake cmake $(GENERATOR) $(EXTENSION_CONFIG_FLAG) $(VCPKG_MANIFEST_FLAGS) $(WASM_COMPILE_TIME_COMMON_FLAGS) $(BUILD_FLAGS) -Bbuild/wasm_threads -DCMAKE_CXX_FLAGS="$(WASM_CXX_THREADS_FLAGS)" -S $(DUCKDB_SRCDIR) -DDUCKDB_EXPLICIT_PLATFORM=wasm_threads -DDUCKDB_CUSTOM_PLATFORM=wasm_threads -DUSE_WASM_THREADS=1
+	# Compat shim: some extensions (e.g. duckdb-avro) hardcode the
+	# "wasm32-emscripten" vcpkg triplet name in their wasm link paths instead of
+	# using VCPKG_TARGET_TRIPLET. Our threaded deps install under
+	# "wasm32-emscripten-threads", so alias the stock name to them after the
+	# configure/install above and before the link below. In a threaded build all
+	# deps are threaded, so the alias is semantically correct.
+	test -d build/wasm_threads/vcpkg_installed/wasm32-emscripten-threads && ln -sfn wasm32-emscripten-threads build/wasm_threads/vcpkg_installed/wasm32-emscripten || true
 	emmake make -j8 -Cbuild/wasm_threads
 
 

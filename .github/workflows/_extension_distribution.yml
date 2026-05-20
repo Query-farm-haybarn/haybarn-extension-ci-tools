@@ -1505,7 +1505,15 @@ jobs:
         id: wasm_image
         shell: bash
         run: |
-          IMG="ghcr.io/${{ inputs.prebuilt_image_namespace }}/haybarn-wasm-${{ inputs.wasm_image_variant }}:${{ inputs.prebuilt_image_tag }}"
+          VARIANT="${{ inputs.wasm_image_variant }}"
+          # wasm_threads (COI) Rust extensions need the nightly toolchain
+          # (-Z build-std + atomics); the rust-nightly image carries it.
+          # C++-only threaded builds are unaffected — same emsdk/vcpkg, only the
+          # Rust toolchain differs. base stays base.
+          if [ "${{ matrix.duckdb_arch }}" = "wasm_threads" ] && [ "$VARIANT" = "rust" ]; then
+            VARIANT="rust-nightly"
+          fi
+          IMG="ghcr.io/${{ inputs.prebuilt_image_namespace }}/haybarn-wasm-${VARIANT}:${{ inputs.prebuilt_image_tag }}"
           echo "ref=${IMG}" >> "$GITHUB_OUTPUT"
           echo "Selected wasm image: ${IMG}"
 
@@ -1577,6 +1585,19 @@ jobs:
           SUBSET_EXTENSIONS_TESTS=${{ inputs.extensions_test_selection }}
           EOF
           echo '${{ inputs.test_config }}' | jq -r '.test_env_variables // {} | to_entries | map("\(.key)=\(.value)") | .[]' >> docker_env.txt
+          # wasm_threads (COI): build threaded Rust extensions with atomics.
+          # CARGO_TARGET_<triple>_RUSTFLAGS is target-scoped, so host
+          # build-scripts/proc-macros are NOT compiled with wasm atomics;
+          # CARGO_UNSTABLE_BUILD_STD rebuilds std with those features (needs the
+          # rust-nightly image + rust-src; nightly-only, hence gated to threads).
+          # echo (not a heredoc) so each line is written flush-left — docker
+          # --env-file rejects leading whitespace in a KEY=VALUE line.
+          if [ "${{ matrix.duckdb_arch }}" = "wasm_threads" ]; then
+            {
+              echo 'CARGO_TARGET_WASM32_UNKNOWN_EMSCRIPTEN_RUSTFLAGS=-Ctarget-feature=+atomics,+bulk-memory,+mutable-globals'
+              echo 'CARGO_UNSTABLE_BUILD_STD=std,panic_abort'
+            } >> docker_env.txt
+          fi
 
       - name: Downgrade AWS cli
         if: ${{ (contains(format(';{0};', inputs.extra_toolchains), ';downgraded_aws_cli;')) }}

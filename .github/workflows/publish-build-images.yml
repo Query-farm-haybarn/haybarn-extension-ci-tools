@@ -193,6 +193,11 @@ jobs:
         variant:
           - { name: base, extras: ';;' }
           - { name: rust, extras: ';rust;' }
+          # Nightly + rust-src for the wasm_threads (COI) platform: threaded
+          # Rust extensions need std rebuilt with atomics/bulk-memory via
+          # `-Z build-std`, which is nightly-only. Pinned nightly is the knob to
+          # tune if it ever mismatches the baked emsdk's wasm-opt/wasm-ld.
+          - { name: rust-nightly, extras: ';rust;', rust_version: 'nightly-2026-05-01', rust_components: 'rust-src' }
     steps:
       - uses: actions/checkout@v6
 
@@ -218,6 +223,8 @@ jobs:
             --build-arg "vcpkg_url=https://github.com/microsoft/vcpkg.git" \
             --build-arg "vcpkg_commit=${HAYBARN_VCPKG_COMMIT}" \
             --build-arg "extra_toolchains=${{ matrix.variant.extras }}" \
+            --build-arg "RUST_VERSION=${{ matrix.variant.rust_version || '1.86.0' }}" \
+            --build-arg "RUST_COMPONENTS=${{ matrix.variant.rust_components || '' }}" \
             -t "${{ steps.tags.outputs.tag_versioned }}" \
             ./docker/wasm
 

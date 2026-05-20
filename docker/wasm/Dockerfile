@@ -154,11 +154,21 @@ ARG extra_toolchains
 # `dtolnay/rust-toolchain@<VERSION>` pin in
 # `.github/workflows/_extension_distribution.yml`.
 ARG RUST_VERSION=1.86.0
+# Space-separated extra rustup components. The rust-nightly variant sets
+# RUST_COMPONENTS=rust-src (with RUST_VERSION=nightly-<date>): threaded Rust
+# extensions for the wasm_threads (COI) platform need std rebuilt via
+# `-Z build-std` with `-C target-feature=+atomics,+bulk-memory,+mutable-globals`,
+# which is nightly-only and requires the rust-src component. The bulk-memory-opt
+# wasm-opt mismatch that motivated the 1.86 pin was an OLD-emsdk (Binaryen)
+# issue; this image bakes a newer emsdk, so nightly should be compatible —
+# validate before relying on it.
+ARG RUST_COMPONENTS=
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN case "$extra_toolchains" in \
   *\;rust\;*) \
     curl https://sh.rustup.rs -sSf | bash -s -- -y --default-toolchain ${RUST_VERSION} && \
     /root/.cargo/bin/rustup target add wasm32-unknown-emscripten && \
+    if [ -n "${RUST_COMPONENTS}" ]; then /root/.cargo/bin/rustup component add ${RUST_COMPONENTS}; fi && \
     /root/.cargo/bin/rustc --version \
   ;; \
 esac

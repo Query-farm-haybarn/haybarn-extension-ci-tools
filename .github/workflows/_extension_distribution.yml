@@ -1563,6 +1563,17 @@ jobs:
           # avro-c). The Linux Docker path forwards this at line 507; the
           # wasm prebuilt-image path needs the same.
           USE_MERGED_VCPKG_MANIFEST=${{ inputs.use_merged_vcpkg_manifest }}
+          # Haybarn: forward the vcpkg target triplet + overlay dirs into the
+          # container. The Linux Docker path forwards these at lines ~517-519;
+          # this wasm prebuilt-image path did not, so the in-container
+          # `make wasm_threads` never passed -DVCPKG_TARGET_TRIPLET and vcpkg
+          # fell back to the auto-detected wasm32-emscripten triplet (non-threaded
+          # deps) — which cannot link into a shared-memory wasm_threads extension.
+          # The mounted workspace is /duckdb_build_dir; ci-tools is checked out
+          # under extension-ci-tools/.
+          VCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_target_triplet }}
+          VCPKG_OVERLAY_TRIPLETS=/duckdb_build_dir/extension-ci-tools/toolchains
+          VCPKG_OVERLAY_PORTS=/duckdb_build_dir/extension-ci-tools/vcpkg_ports
           SUBSET_EXTENSIONS_TESTS=${{ inputs.extensions_test_selection }}
           EOF
           echo '${{ inputs.test_config }}' | jq -r '.test_env_variables // {} | to_entries | map("\(.key)=\(.value)") | .[]' >> docker_env.txt

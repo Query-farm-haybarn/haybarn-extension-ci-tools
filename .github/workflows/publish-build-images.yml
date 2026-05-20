@@ -195,9 +195,16 @@ jobs:
           - { name: rust, extras: ';rust;' }
           # Nightly + rust-src for the wasm_threads (COI) platform: threaded
           # Rust extensions need std rebuilt with atomics/bulk-memory via
-          # `-Z build-std`, which is nightly-only. Pinned nightly is the knob to
-          # tune if it ever mismatches the baked emsdk's wasm-opt/wasm-ld.
-          - { name: rust-nightly, extras: ';rust;', rust_version: 'nightly-2026-05-01', rust_components: 'rust-src' }
+          # `-Z build-std`, which is nightly-only. Pin a SPECIFIC nightly (not a
+          # floating channel): `-Z build-std` recompiles std/alloc from this
+          # toolchain's rust-src, so a fixed date keeps those rebuilds
+          # reproducible. This is also the knob to tune if the nightly ever
+          # mismatches the baked emsdk's wasm-opt/wasm-ld. (nightly-2026-05-20
+          # was the current nightly when this image was introduced.)
+          # The matching build flags live in the extension build wiring:
+          #   RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals"
+          #   cargo ... -Z build-std=std,panic_abort
+          - { name: rust-nightly, extras: ';rust;', rust_version: 'nightly-2026-05-20', rust_components: 'rust-src' }
     steps:
       - uses: actions/checkout@v6
 

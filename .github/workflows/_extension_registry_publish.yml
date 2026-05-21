@@ -204,59 +204,80 @@ jobs:
           echo "leaves:"; ls dist/npm-leaves/ 2>/dev/null || echo "(none)"
           echo "metas:";  ls dist/npm-metas/  2>/dev/null || echo "(none)"
 
+      # npm publishes are independent per package, so fan them out. Concurrency
+      # is capped (npm enforces a publish rate limit, and each --provenance
+      # publish does an OIDC token exchange + sigstore signing) and tunable via
+      # NPM_PUBLISH_CONCURRENCY. Each task writes its own temp error file (the
+      # old shared /tmp/npm.err would race), and prints exactly one OK/SKIP/FAIL
+      # marker line that the aggregation greps — interleaved error dumps are
+      # indented so they never match a marker.
       - name: Publish leaves (bundled mode)
         if: ${{ inputs.artifact_shape == 'bundled' }}
         env:
           NPM_CONFIG_PROVENANCE: 'true'
           NODE_AUTH_TOKEN: ${{ secrets.HAYBARN_NPM_TOKEN }}
+          NPM_PUBLISH_CONCURRENCY: ${{ vars.NPM_PUBLISH_CONCURRENCY || '8' }}
         shell: bash
         run: |
           set -uo pipefail
-          n_ok=0; n_skip=0; n_fail=0
-          for leaf in dist/npm-leaves/*/; do
-            [[ -d "$leaf" ]] || continue
-            pkg=$(python3 -c "import json; print(json.load(open('$leaf/package.json'))['name'])")
-            ver=$(python3 -c "import json; print(json.load(open('$leaf/package.json'))['version'])")
-            echo "::group::$pkg@$ver"
-            if (cd "$leaf" && npm publish --provenance --access public --tag latest 2>/tmp/npm.err); then
-              n_ok=$((n_ok+1)); echo "  → published"
-            elif grep -qiE 'previously published|EPUBLISHCONFLICT|cannot publish over' /tmp/npm.err; then
-              n_skip=$((n_skip+1)); echo "  → already published, skipping"
+          npm_publish_one() {
+            d="$1"
+            pkg=$(python3 -c "import json; print(json.load(open('$d/package.json'))['name'])")
+            ver=$(python3 -c "import json; print(json.load(open('$d/package.json'))['version'])")
+            err=$(mktemp)
+            if (cd "$d" && npm publish --provenance --access public --tag latest 2>"$err"); then
+              echo "OK   $pkg@$ver"
+            elif grep -qiE 'previously published|EPUBLISHCONFLICT|cannot publish over' "$err"; then
+              echo "SKIP $pkg@$ver"
             else
-              n_fail=$((n_fail+1)); cat /tmp/npm.err
+              echo "FAIL $pkg@$ver"; sed 's/^/    /' "$err"
               echo "::error::publish failed for $pkg@$ver"
             fi
-            echo "::endgroup::"
-          done
-          echo "leaves: ok=$n_ok skip=$n_skip fail=$n_fail"
-          [[ $n_fail -eq 0 ]]
+            rm -f "$err"
+          }
+          export -f npm_publish_one
+          find dist/npm-leaves -mindepth 1 -maxdepth 1 -type d -print0 \
+            | xargs -0 -P "$NPM_PUBLISH_CONCURRENCY" -I{} bash -c 'npm_publish_one "$1"' _ {} \
+            | tee /tmp/leaf-results.txt
+          ok=$(grep -c '^OK '   /tmp/leaf-results.txt || true)
+          sk=$(grep -c '^SKIP ' /tmp/leaf-results.txt || true)
+          fl=$(grep -c '^FAIL ' /tmp/leaf-results.txt || true)
+          echo "leaves: ok=$ok skip=$sk fail=$fl"
+          [[ "$fl" -eq 0 ]]
 
       - name: Publish metas (bundled mode)
         if: ${{ inputs.artifact_shape == 'bundled' }}
         env:
           NPM_CONFIG_PROVENANCE: 'true'
           NODE_AUTH_TOKEN: ${{ secrets.HAYBARN_NPM_TOKEN }}
+          NPM_PUBLISH_CONCURRENCY: ${{ vars.NPM_PUBLISH_CONCURRENCY || '8' }}
         shell: bash
         run: |
           set -uo pipefail
-          n_ok=0; n_skip=0; n_fail=0
-          for meta in dist/npm-metas/*/; do
-            [[ -d "$meta" ]] || continue
-            pkg=$(python3 -c "import json; print(json.load(open('$meta/package.json'))['name'])")
-            ver=$(python3 -c "import json; print(json.load(open('$meta/package.json'))['version'])")
-            echo "::group::$pkg@$ver"
-            if (cd "$meta" && npm publish --provenance --access public --tag latest 2>/tmp/npm.err); then
-              n_ok=$((n_ok+1)); echo "  → published"
-            elif grep -qiE 'previously published|EPUBLISHCONFLICT|cannot publish over' /tmp/npm.err; then
-              n_skip=$((n_skip+1)); echo "  → already published, skipping"
+          npm_publish_one() {
+            d="$1"
+            pkg=$(python3 -c "import json; print(json.load(open('$d/package.json'))['name'])")
+            ver=$(python3 -c "import json; print(json.load(open('$d/package.json'))['version'])")
+            err=$(mktemp)
+            if (cd "$d" && npm publish --provenance --access public --tag latest 2>"$err"); then
+              echo "OK   $pkg@$ver"
+            elif grep -qiE 'previously published|EPUBLISHCONFLICT|cannot publish over' "$err"; then
+              echo "SKIP $pkg@$ver"
             else
-              n_fail=$((n_fail+1)); cat /tmp/npm.err
+              echo "FAIL $pkg@$ver"; sed 's/^/    /' "$err"
               echo "::error::publish failed for $pkg@$ver"
             fi
-            echo "::endgroup::"
-          done
-          echo "metas: ok=$n_ok skip=$n_skip fail=$n_fail"
-          [[ $n_fail -eq 0 ]]
+            rm -f "$err"
+          }
+          export -f npm_publish_one
+          find dist/npm-metas -mindepth 1 -maxdepth 1 -type d -print0 \
+            | xargs -0 -P "$NPM_PUBLISH_CONCURRENCY" -I{} bash -c 'npm_publish_one "$1"' _ {} \
+            | tee /tmp/meta-results.txt
+          ok=$(grep -c '^OK '   /tmp/meta-results.txt || true)
+          sk=$(grep -c '^SKIP ' /tmp/meta-results.txt || true)
+          fl=$(grep -c '^FAIL ' /tmp/meta-results.txt || true)
+          echo "metas: ok=$ok skip=$sk fail=$fl"
+          [[ "$fl" -eq 0 ]]
 
       # ---------- per-extension mode ----------
       - name: Download leaf tarballs (per-extension mode)

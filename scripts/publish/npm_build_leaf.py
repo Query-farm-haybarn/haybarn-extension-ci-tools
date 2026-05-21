@@ -120,6 +120,119 @@ def render_leaf_readme(
     return "\n".join(parts)
 
 
+def render_wasm_leaf_readme(
+    pkg: str,
+    extension: str,
+    haybarn_version: str,
+    variant: str,
+    meta_pkg: str,
+    ext_source_repo: str,
+    is_community: bool,
+) -> str:
+    """README for a WebAssembly leaf — npm can't auto-select it (no wasm
+    os/cpu), so this is installed explicitly and pointed at by duckdb-wasm."""
+    bin_path = f"{pkg}/bin/{extension}.duckdb_extension.wasm"
+    parts = [
+        '<p align="center">',
+        f'  <img src="{HAYBARN_ICON_URL}" alt="Haybarn" width="96" height="96">',
+        "</p>",
+        "",
+        f"# `{pkg}`",
+        "",
+        f"WebAssembly (**{variant}**) build of the **{extension}** extension, built "
+        f"against [Haybarn]({HAYBARN_REPO_URL}) **{haybarn_version}** for use with "
+        f"[duckdb-wasm](https://github.com/duckdb/duckdb-wasm).",
+        "",
+    ]
+    if ext_source_repo:
+        parts += [f"> **Source:** [{ext_source_repo}]({ext_source_repo})", ""]
+    parts += [
+        "## Why this package",
+        "",
+        "Lets you **bundle / self-host / version-pin** the wasm extension instead "
+        "of fetching it from the Haybarn CDN at runtime — handy for offline, "
+        "CSP-restricted, or air-gapped duckdb-wasm apps.",
+        "",
+        "Pick the variant matching the duckdb-wasm bundle your app loads: "
+        "`mvp`, `eh`, or `threads`.",
+        "",
+        "## Install",
+        "",
+        "```sh",
+        f"npm install {pkg}",
+        "```",
+        "",
+        "## Use it (duckdb-wasm)",
+        "",
+        "Resolve the bundled `.wasm` to a URL and point duckdb-wasm at it. With a "
+        "bundler (Vite shown; webpack/esbuild use `new URL(..., import.meta.url)`):",
+        "",
+        "```js",
+        f"import extUrl from '{bin_path}?url';",
+        "const conn = await db.connect();",
+        f"await conn.query(`INSTALL {extension} FROM '${{extUrl}}'`);",
+        f"await conn.query(`LOAD {extension}`);",
+        "```",
+        "",
+        "> Exact extension-loading API depends on your duckdb-wasm version; the key "
+        "point is that `extUrl` is a local, bundler-emitted asset, not a CDN fetch. "
+        "See the [duckdb-wasm docs](https://github.com/duckdb/duckdb-wasm).",
+        "",
+        f"For automatic, native (non-wasm) installs use the meta-package "
+        f"[`{meta_pkg}`](https://www.npmjs.com/package/{meta_pkg}).",
+        "",
+        "## Trademark",
+        "",
+        "Haybarn is an independent derived distribution of DuckDB published by "
+        "[Query Farm LLC](https://query.farm). Not affiliated with or endorsed by "
+        "the DuckDB Foundation. DuckDB is a trademark of the DuckDB Foundation.",
+        "",
+    ]
+    return "\n".join(parts)
+
+
+def _write_wasm_leaf(stage: pathlib.Path, pkg: str, version: str, extension: str,
+                     haybarn_version: str, variant: str, metadata_blob: dict) -> int:
+    """Emit a wasm leaf package.json + README. No os/cpu/libc fields — npm has
+    no wasm target, so this is NOT a meta optionalDependency; it's installed by
+    name and handed to duckdb-wasm as a bundled asset."""
+    repo_slug = os.environ.get("GITHUB_REPOSITORY",
+                               "Query-farm-haybarn/haybarn-community-extensions")
+    repo_url = f"https://github.com/{repo_slug}"
+    is_community = repo_slug.endswith("/haybarn-community-extensions")
+    ext_source_repo = os.environ.get("EXTENSION_SOURCE_REPO", "").strip()
+    homepage_url = ext_source_repo or repo_url
+    bugs_url = f"{ext_source_repo}/issues" if ext_source_repo else f"{repo_url}/issues"
+    meta_pkg = f"@haybarn/ext-{extension}-h{haybarn_version.replace('.', '-')}"
+
+    spec = {
+        "name": pkg,
+        "version": version,
+        "description": (
+            f"WebAssembly ({variant}) build of the Haybarn extension {extension!r} "
+            f"for duckdb-wasm. Built against haybarn {haybarn_version}. Pick the "
+            f"variant (mvp/eh/threads) matching your duckdb-wasm bundle."),
+        "homepage": homepage_url,
+        "bugs": {"url": bugs_url},
+        "repository": {"type": "git", "url": f"git+{repo_url}.git"},
+        "license": os.environ.get("LICENSE") or "MIT",
+        "keywords": ["haybarn", "duckdb", "duckdb-wasm", "wasm", "extension", extension],
+        # Intentionally NO os/cpu/libc — npm can't target wasm, so this leaf is
+        # installed explicitly (not auto-resolved by the meta).
+        "files": ["bin", "haybarn-metadata.json", "README.md"],
+        "haybarn": metadata_blob,
+        "publishConfig": {"access": "public"},
+    }
+    (stage / "package.json").write_text(json.dumps(spec, indent=2) + "\n")
+    print(f"wrote {stage / 'package.json'} (wasm {variant})")
+    (stage / "README.md").write_text(render_wasm_leaf_readme(
+        pkg=pkg, extension=extension, haybarn_version=haybarn_version,
+        variant=variant, meta_pkg=meta_pkg, ext_source_repo=ext_source_repo,
+        is_community=is_community))
+    print(f"wrote {stage / 'README.md'}")
+    return 0
+
+
 def main() -> int:
     try:
         stage = pathlib.Path(os.environ["STAGE"])
@@ -127,9 +240,6 @@ def main() -> int:
         version = os.environ["VERSION"]
         extension = os.environ["EXTENSION"]
         haybarn_version = os.environ["HAYBARN_VERSION"]
-        host_os = os.environ["OS"]
-        host_cpu = os.environ["CPU"]
-        host_libc = os.environ["LIBC"]
         metadata_path = pathlib.Path(os.environ["HAYBARN_METADATA"])
     except KeyError as e:
         print(f"npm_build_leaf: missing env var {e}", file=sys.stderr)
@@ -141,6 +251,20 @@ def main() -> int:
         return 2
 
     metadata_blob = json.loads(metadata_path.read_text())
+
+    # WebAssembly leaves take a distinct shape (no os/cpu/libc, wasm README).
+    wasm_variant = os.environ.get("WASM_VARIANT", "").strip()
+    if wasm_variant:
+        return _write_wasm_leaf(stage, pkg, version, extension,
+                                haybarn_version, wasm_variant, metadata_blob)
+
+    try:
+        host_os = os.environ["OS"]
+        host_cpu = os.environ["CPU"]
+        host_libc = os.environ["LIBC"]
+    except KeyError as e:
+        print(f"npm_build_leaf: missing env var {e}", file=sys.stderr)
+        return 2
 
     desc = (
         f"Haybarn extension {extension!r} for {host_os}/{host_cpu}"

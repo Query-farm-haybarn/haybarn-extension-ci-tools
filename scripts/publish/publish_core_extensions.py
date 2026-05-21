@@ -48,7 +48,9 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import gzip
 import hashlib
+import io
 import json
 import os
 import pathlib
@@ -56,8 +58,29 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, utils
+
+try:
+    from tqdm import tqdm
+except ImportError:  # progress bar is optional
+    tqdm = None
 
 SCRIPT_DIR = pathlib.Path(__file__).parent.resolve()
+
+SIGNATURE_SIZE = 256
+CHUNK = 1024 * 1024  # 1 MiB — must match the engine verifier (extension_load.cpp)
+
+# gpg-agent serializes poorly under concurrent signing; guard the gpg calls.
+_GPG_LOCK = threading.Lock()
+
+
+def log(msg: str) -> None:
+    print(msg, flush=True)
 
 # duckdb_arch → (PyPI platform tag, npm os, npm cpu, npm libc, leaf suffix)
 PLATMAP: dict[str, tuple[str, str, str, str, str]] = {
@@ -79,58 +102,51 @@ def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, check=True, **kw)
 
 
-def sign_and_compress_binary(ext_path: pathlib.Path, arch: str, signing_pk: str,
-                             work_dir: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
-    """Mirror of extension-upload-single.sh's sign+compress dance, isolated
-    so we can do it for each binary while keeping the original artifact
-    intact. Returns (compressed, signed_uncompressed): the R2/pypi channels
-    ship the compressed binary; the npm leaf ships the signed-but-uncompressed
-    one (npm gzips the tarball itself, so shipping .gz double-compresses)."""
+def two_level_hash(body: bytes) -> bytes:
+    """The engine's two-level extension hash: SHA-256 each 1 MiB chunk, concat
+    the digests, SHA-256 that. Matches extension_load.cpp's parallel verifier
+    and compute-extension-hash.sh byte-for-byte."""
+    concat = b"".join(
+        hashlib.sha256(body[i:i + CHUNK]).digest()
+        for i in range(0, len(body), CHUNK)
+    )
+    return hashlib.sha256(concat).digest()
+
+
+def sign_and_compress_binary(ext_path: pathlib.Path, arch: str,
+                             signing_key) -> tuple[bytes, bytes]:
+    """Sign + compress one extension binary entirely in memory. Returns
+    (compressed_bytes, signed_uncompressed_bytes): the R2/pypi channels ship
+    the compressed binary; the npm leaf ships the signed-but-uncompressed one
+    (npm gzips the tarball itself, so shipping .gz double-compresses).
+
+    Pure in-process — no shell compute-extension-hash.sh (`split`) and no
+    private.pem on disk, so this is safe to run on many threads at once."""
     is_wasm = arch.startswith("wasm")
-    suffix = "wasm" if is_wasm else "gz"
-    dest = work_dir / f"{ext_path.stem}.duckdb_extension.{suffix}"
-    # The signed-but-uncompressed binary, kept for the npm leaf.
-    signed = work_dir / f"{ext_path.stem}.duckdb_extension"
-
-    # Copy → truncate last 256 bytes (placeholder signature footer)
-    append = signed
-    shutil.copy(ext_path, append)
-    with append.open("r+b") as f:
-        f.seek(-256, 2)
-        f.truncate()
-
-    # Hash the truncated body, RSA-sign with the embedded extension key
-    sign_file = work_dir / "work.sign"
-    key_file = work_dir / "private.pem"
-    hash_file = work_dir / "work.hash"
-    try:
-        key_file.write_text(signing_pk)
-        # compute-extension-hash.sh ships in scripts/ — use it for parity
-        # with extension-upload-single.sh's hash format.
-        with hash_file.open("wb") as h:
-            run([str(SCRIPT_DIR / "compute-extension-hash.sh"), str(append)], stdout=h)
-        run(["openssl", "pkeyutl", "-sign", "-in", str(hash_file),
-             "-inkey", str(key_file), "-pkeyopt", "digest:sha256",
-             "-out", str(sign_file)])
-    finally:
-        if key_file.exists():
-            key_file.unlink()
-
-    # Append signature, then compress
-    with append.open("ab") as a, sign_file.open("rb") as s:
-        a.write(s.read())
-    sign_file.unlink()
+    raw = ext_path.read_bytes()
+    # Strip the 256-byte placeholder footer, sign the body, re-append.
+    body = raw[:-SIGNATURE_SIZE]
+    if signing_key is not None:
+        sig = signing_key.sign(two_level_hash(body), padding.PKCS1v15(),
+                               utils.Prehashed(hashes.SHA256()))
+        if len(sig) != SIGNATURE_SIZE:
+            raise SystemExit(
+                f"signing key produced a {len(sig)}-byte signature; the footer "
+                f"is fixed at {SIGNATURE_SIZE} bytes (expected an RSA-2048 key)")
+    else:
+        sig = b"\x00" * SIGNATURE_SIZE
+    signed = body + sig
 
     if is_wasm:
-        with append.open("rb") as src, dest.open("wb") as dst:
-            run(["brotli"], stdin=src, stdout=dst)
+        r = subprocess.run(["brotli", "-c"], input=signed,
+                           stdout=subprocess.PIPE, check=True)
+        compressed = r.stdout
     else:
-        with append.open("rb") as src, dest.open("wb") as dst:
-            run(["gzip"], stdin=src, stdout=dst)
-    # NB: do NOT unlink `append` — it is the signed-uncompressed binary the
-    # npm leaf ships. gzip/brotli above read it via stdin and leave it intact.
-    hash_file.unlink()
-    return dest, signed
+        buf = io.BytesIO()
+        with gzip.GzipFile(fileobj=buf, mode="wb", mtime=0) as gz:
+            gz.write(signed)
+        compressed = buf.getvalue()
+    return compressed, signed
 
 
 def sha256_hex(path: pathlib.Path) -> str:
@@ -143,9 +159,11 @@ def sha256_hex(path: pathlib.Path) -> str:
 
 def gpg_sign(path: pathlib.Path, passphrase: str, key_id: str) -> pathlib.Path:
     asc = pathlib.Path(str(path) + ".asc")
-    run(["gpg", "--batch", "--yes", "--pinentry-mode", "loopback",
-         "--passphrase", passphrase, "--local-user", key_id,
-         "--detach-sign", "--armor", "--output", str(asc), str(path)])
+    # Serialize gpg: concurrent invocations contend on the single gpg-agent.
+    with _GPG_LOCK:
+        run(["gpg", "--batch", "--yes", "--pinentry-mode", "loopback",
+             "--passphrase", passphrase, "--local-user", key_id,
+             "--detach-sign", "--armor", "--output", str(asc), str(path)])
     return asc
 
 
@@ -231,6 +249,20 @@ def aws_cp(local: pathlib.Path, s3_url: str, dry_run: bool) -> None:
     run(["aws", "s3", "cp", str(local), s3_url])
 
 
+def aws_sync(local_dir: pathlib.Path, s3_url: str, dry_run: bool) -> None:
+    """Ship a whole staged tree in one call. Plain sync (no --content-type /
+    --cache-control) reproduces the per-file `aws s3 cp` behavior these
+    immutable objects had before. sync skips objects already present with the
+    same size, so re-publishing a commit is cheap and the mutable current.json
+    pointers (always freshly staged) re-upload."""
+    conc = os.environ.get("PUBLISH_SYNC_CONCURRENCY", "32")
+    run(["aws", "configure", "set", "default.s3.max_concurrent_requests", conc])
+    cmd = ["aws", "s3", "sync", str(local_dir), s3_url, "--no-progress"]
+    if dry_run:
+        cmd.append("--dryrun")
+    run(cmd)
+
+
 def maybe_read_previous(s3_pointer: str, dry_run: bool) -> str:
     """Fetch previous current.json's 'latest' if it exists, else ''."""
     if dry_run:
@@ -299,123 +331,139 @@ def main(argv: list[str]) -> int:
     # Track which leaves succeeded per extension for the meta packages
     leaves_by_ext: dict[str, list[str]] = {}
 
+    # Local staging tree mirroring the R2 key layout — shipped in ONE aws s3
+    # sync at the end instead of hundreds of per-file `aws s3 cp` cold-starts.
+    r2_stage = pathlib.Path(tempfile.mkdtemp(prefix="publish-core-r2-"))
     work_root = pathlib.Path(tempfile.mkdtemp(prefix="publish-core-"))
 
-    try:
-        # Layout: <repo-dir>/<duckdb_version>/<arch>/<ext>.duckdb_extension(.wasm)
-        for version_dir in sorted(args.repo_dir.iterdir()):
-            if not version_dir.is_dir():
+    # Load the RSA signing key once; cryptography key objects are safe to sign
+    # with from multiple threads.
+    signing_key = serialization.load_pem_private_key(signing_pk.encode(), password=None)
+
+    # Enumerate every (duckdb_version, arch, ext_file) up front so we can fan
+    # the per-tuple work out across a thread pool. Layout:
+    #   <repo-dir>/<duckdb_version>/<arch>/<ext>.duckdb_extension(.wasm)
+    tuples: list[tuple[str, str, pathlib.Path]] = []
+    for version_dir in sorted(args.repo_dir.iterdir()):
+        if not version_dir.is_dir():
+            continue
+        dv = version_dir.name
+        for arch_dir in sorted(version_dir.iterdir()):
+            if not arch_dir.is_dir():
                 continue
-            dv = version_dir.name
-            for arch_dir in sorted(version_dir.iterdir()):
-                if not arch_dir.is_dir():
-                    continue
-                arch = arch_dir.name
-                is_wasm = arch.startswith("wasm")
-                pat = "*.duckdb_extension.wasm" if is_wasm else "*.duckdb_extension"
-                for ext_file in sorted(arch_dir.glob(pat)):
-                    ext = ext_file.name.replace(".duckdb_extension.wasm", "") \
-                                       .replace(".duckdb_extension", "")
-                    print(f"\n=== {ext} on {arch} ({dv}) ===")
-                    work = work_root / arch / ext
-                    work.mkdir(parents=True, exist_ok=True)
+            arch = arch_dir.name
+            pat = "*.duckdb_extension.wasm" if arch.startswith("wasm") else "*.duckdb_extension"
+            for ext_file in sorted(arch_dir.glob(pat)):
+                tuples.append((dv, arch, ext_file))
 
-                    compressed, signed_bin = sign_and_compress_binary(ext_file, arch, signing_pk, work)
-                    sha = sha256_hex(compressed)
-                    print(f"  sha256: {sha}")
+    def process_tuple(dv: str, arch: str, ext_file: pathlib.Path) -> tuple[str, str | None]:
+        """Sign, build manifests/metadata, GPG-sign, and stage every artifact
+        for one (extension, platform) into the local trees. No network writes —
+        the R2 objects land in r2_stage and are synced in bulk afterwards.
+        Returns (ext, leaf_suffix|None) for meta-package aggregation."""
+        ext = ext_file.name.replace(".duckdb_extension.wasm", "") \
+                           .replace(".duckdb_extension", "")
+        is_wasm = arch.startswith("wasm")
+        compressed, signed_bytes = sign_and_compress_binary(ext_file, arch, signing_key)
+        sha = hashlib.sha256(compressed).hexdigest()
+        compressed_name = f"{ext}.duckdb_extension.{'wasm' if is_wasm else 'gz'}"
 
-                    # 1. haybarn-metadata.json (small blob, also used by wheel/leaf)
-                    meta_path = work / "haybarn-metadata.json"
-                    call_helper("generate_haybarn_metadata.py",
-                                "--extension", ext,
-                                "--ext-commit", args.engine_commit,
-                                "--haybarn-version", args.haybarn_version,
-                                "--ext-version-label", "",   # core has no per-ext semver
-                                "--sha256", sha,
-                                "--built-at", built_at,
-                                "--out", str(meta_path))
+        # Per-commit immutable dir, and the mutable pointer dir one level up.
+        immut = r2_stage / dv / arch / ext / ext_short
+        ptr_dir = r2_stage / dv / arch / ext
+        immut.mkdir(parents=True, exist_ok=True)
+        (immut / compressed_name).write_bytes(compressed)
 
-                    # 2. R2 manifest.json (superset)
-                    prev = maybe_read_previous(
-                        f"s3://{args.r2_bucket}/{args.r2_prefix}/{dv}/{arch}/{ext}/current.json",
-                        dry_run)
-                    manifest_path = work / "manifest.json"
-                    call_helper("r2_build_manifest.py",
-                                "--extension", ext,
-                                "--duckdb-version", dv,
-                                "--platform", arch,
-                                "--ext-commit", args.engine_commit,
-                                "--ext-version-label", "",
-                                "--sha256", sha,
-                                "--object", compressed.name,
-                                "--built-at", built_at,
-                                "--haybarn-engine-commit", args.engine_commit,
-                                "--signed-by", args.signed_by,
-                                "--channels", args.channels,
-                                "--previous-commit", prev,
-                                "--out", str(manifest_path))
+        work = work_root / dv / arch / ext
+        work.mkdir(parents=True, exist_ok=True)
 
-                    # 3. GPG sign (manifest + current.json), if key available
-                    manifest_asc = None
-                    current_path = work / "current.json"
-                    current_asc = None
-                    current_path.write_text(json.dumps({
-                        "latest": args.engine_commit,
-                        "updated_at": built_at,
-                    }, indent=2, sort_keys=True) + "\n")
-                    if gpg_key_id:
-                        manifest_asc = gpg_sign(manifest_path, gpg_pass, gpg_key_id)
-                        current_asc  = gpg_sign(current_path,  gpg_pass, gpg_key_id)
+        # 1. haybarn-metadata.json (embedded into wheel + npm leaf; not on R2)
+        meta_path = work / "haybarn-metadata.json"
+        call_helper("generate_haybarn_metadata.py",
+                    "--extension", ext, "--ext-commit", args.engine_commit,
+                    "--haybarn-version", args.haybarn_version, "--ext-version-label", "",
+                    "--sha256", sha, "--built-at", built_at, "--out", str(meta_path))
 
-                    # 4. Upload to per-commit immutable R2 path
-                    pfx = f"s3://{args.r2_bucket}/{args.r2_prefix}/{dv}/{arch}/{ext}/{ext_short}"
-                    aws_cp(compressed,    f"{pfx}/{compressed.name}",       dry_run)
-                    aws_cp(manifest_path, f"{pfx}/manifest.json",           dry_run)
-                    if manifest_asc:
-                        aws_cp(manifest_asc, f"{pfx}/manifest.json.asc",     dry_run)
+        # 2. R2 manifest.json (chained off the previous current.json pointer)
+        prev = maybe_read_previous(
+            f"s3://{args.r2_bucket}/{args.r2_prefix}/{dv}/{arch}/{ext}/current.json",
+            dry_run)
+        manifest_path = immut / "manifest.json"
+        call_helper("r2_build_manifest.py",
+                    "--extension", ext, "--duckdb-version", dv, "--platform", arch,
+                    "--ext-commit", args.engine_commit, "--ext-version-label", "",
+                    "--sha256", sha, "--object", compressed_name, "--built-at", built_at,
+                    "--haybarn-engine-commit", args.engine_commit, "--signed-by", args.signed_by,
+                    "--channels", args.channels, "--previous-commit", prev,
+                    "--out", str(manifest_path))
 
-                    # 5. Update current.json pointer
-                    ptr = f"s3://{args.r2_bucket}/{args.r2_prefix}/{dv}/{arch}/{ext}/current.json"
-                    aws_cp(current_path, ptr, dry_run)
-                    if current_asc:
-                        aws_cp(current_asc, f"{ptr}.asc", dry_run)
+        # 3. current.json pointer + GPG detached sigs (.asc beside each file)
+        current_path = ptr_dir / "current.json"
+        current_path.write_text(json.dumps(
+            {"latest": args.engine_commit, "updated_at": built_at},
+            indent=2, sort_keys=True) + "\n")
+        if gpg_key_id:
+            gpg_sign(manifest_path, gpg_pass, gpg_key_id)
+            gpg_sign(current_path, gpg_pass, gpg_key_id)
 
-                    # 6. pip wheel + npm leaf (skip wasm + windows_amd64_mingw)
-                    plat = PLATMAP.get(arch)
-                    if plat is None:
-                        print(f"  (no pypi/npm platform mapping for {arch} — skipping)")
-                        continue
-                    py_tag, npm_os, npm_cpu, npm_libc, leaf_suffix = plat
+        # 4. pip wheel + npm leaf (skip wasm + windows_amd64_mingw)
+        plat = PLATMAP.get(arch)
+        if plat is None:
+            return ext, None
+        py_tag, npm_os, npm_cpu, npm_libc, leaf_suffix = plat
 
-                    call_helper("pypi_build_wheel.py",
-                                "--extension", ext,
-                                "--haybarn-version", args.haybarn_version,
-                                "--version", calver,
-                                "--platform-tag", py_tag,
-                                "--binary", str(compressed),
-                                "--haybarn-metadata", str(meta_path),
-                                "--license", str(args.license),
-                                "--out-dir", str(pypi_dir))
+        comp_file = work / compressed_name  # the wheel ships the compressed binary
+        comp_file.write_bytes(compressed)
+        call_helper("pypi_build_wheel.py",
+                    "--extension", ext, "--haybarn-version", args.haybarn_version,
+                    "--version", calver, "--platform-tag", py_tag,
+                    "--binary", str(comp_file), "--haybarn-metadata", str(meta_path),
+                    "--license", str(args.license), "--out-dir", str(pypi_dir))
 
-                    # npm leaf — emit a directory ready for `cd && npm publish`
-                    leaf_pkg = npm_leaf_pkg_name(ext, args.haybarn_version, leaf_suffix)
-                    # npm rejects '/' in directory names of npm pkg paths
-                    leaf_stage = npm_leaves_dir / leaf_pkg.replace("/", "_")
-                    (leaf_stage / "bin").mkdir(parents=True, exist_ok=True)
-                    # npm ships the signed-but-uncompressed .duckdb_extension —
-                    # npm already gzips the tarball, so the .gz would be
-                    # double-compressed (and re-decompressed on install).
-                    shutil.copy(signed_bin, leaf_stage / "bin" / signed_bin.name)
-                    shutil.copy(meta_path,  leaf_stage / "haybarn-metadata.json")
-                    env = dict(os.environ,
-                               STAGE=str(leaf_stage), PKG=leaf_pkg,
-                               VERSION=calver, EXTENSION=ext,
-                               HAYBARN_VERSION=args.haybarn_version,
-                               OS=npm_os, CPU=npm_cpu, LIBC=npm_libc,
-                               HAYBARN_METADATA=str(leaf_stage / "haybarn-metadata.json"))
-                    run(["python3", str(SCRIPT_DIR / "npm_build_leaf.py")], env=env)
+        leaf_pkg = npm_leaf_pkg_name(ext, args.haybarn_version, leaf_suffix)
+        leaf_stage = npm_leaves_dir / leaf_pkg.replace("/", "_")  # npm dislikes '/'
+        (leaf_stage / "bin").mkdir(parents=True, exist_ok=True)
+        # npm ships the signed-but-uncompressed .duckdb_extension — npm gzips the
+        # tarball itself, so the .gz would be double-compressed.
+        (leaf_stage / "bin" / f"{ext}.duckdb_extension").write_bytes(signed_bytes)
+        shutil.copy(meta_path, leaf_stage / "haybarn-metadata.json")
+        env = dict(os.environ,
+                   STAGE=str(leaf_stage), PKG=leaf_pkg, VERSION=calver, EXTENSION=ext,
+                   HAYBARN_VERSION=args.haybarn_version,
+                   OS=npm_os, CPU=npm_cpu, LIBC=npm_libc,
+                   HAYBARN_METADATA=str(leaf_stage / "haybarn-metadata.json"))
+        run(["python3", str(SCRIPT_DIR / "npm_build_leaf.py")], env=env)
+        return ext, leaf_suffix
 
+    try:
+        # Phase 1: stage every tuple in parallel (subprocess + network + gpg
+        # bound, so threads overlap the waits; gpg itself is lock-serialized).
+        total = len(tuples)
+        jobs = int(os.environ.get("PUBLISH_CONCURRENCY",
+                                  min(16, (os.cpu_count() or 4) * 4)))
+        t0 = time.monotonic()
+        log(f"Phase 1/2: staging {total} (extension,platform) tuples "
+            f"(jobs={jobs}) [{'for_real' if not dry_run else 'DRY RUN'}]")
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            futs = {pool.submit(process_tuple, dv, arch, ef): (dv, arch, ef)
+                    for (dv, arch, ef) in tuples}
+            done = as_completed(futs)
+            if tqdm is not None:
+                done = tqdm(done, total=total, desc="sign+stage", unit="ext",
+                            mininterval=0.5)
+            for i, fut in enumerate(done, 1):
+                ext, leaf_suffix = fut.result()  # re-raise worker exceptions
+                if leaf_suffix:
                     leaves_by_ext.setdefault(ext, []).append(leaf_suffix)
+                if tqdm is None:
+                    log(f"  [{i}/{total}] {time.monotonic() - t0:6.1f}s  {ext} ({futs[fut][1]})")
+        log(f"Phase 1 done: {total} tuples in {time.monotonic() - t0:.1f}s")
+
+        # Phase 2: ship the whole immutable R2 tree (+ pointers) in one sync.
+        log(f"Phase 2/2: aws s3 sync -> s3://{args.r2_bucket}/{args.r2_prefix}")
+        t1 = time.monotonic()
+        aws_sync(r2_stage, f"s3://{args.r2_bucket}/{args.r2_prefix}", dry_run)
+        log(f"Phase 2 done in {time.monotonic() - t1:.1f}s")
 
         # 7. Per-extension npm meta packages — must run after all leaves are known
         for ext, suffixes in leaves_by_ext.items():
@@ -455,6 +503,7 @@ def main(argv: list[str]) -> int:
         return 0
     finally:
         shutil.rmtree(work_root, ignore_errors=True)
+        shutil.rmtree(r2_stage, ignore_errors=True)
 
 
 if __name__ == "__main__":

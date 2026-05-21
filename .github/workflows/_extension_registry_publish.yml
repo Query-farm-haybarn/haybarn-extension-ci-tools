@@ -388,14 +388,18 @@ jobs:
           fl=$(grep -c '^FAIL ' /tmp/leaf-results.txt || true)
           echo "leaves: ok=$(grep -c '^OK ' /tmp/leaf-results.txt || true) skip=$(grep -c '^SKIP ' /tmp/leaf-results.txt || true) fail=$fl"
 
-          # present_leaves = slugs (leaf name minus the meta prefix) of every
-          # leaf that is now on npm (OK or already-present SKIP), for the meta.
-          # marker line: "OK   <pkg>@<ver>" where <pkg> itself starts with '@'
-          # (e.g. @haybarn/ext-a5-h1-5-3-linux-x64). Strip the version (after the
-          # LAST '@'), then the meta prefix, leaving the platform slug.
-          PRESENT_LEAVES=$(grep -E '^(OK|SKIP) ' /tmp/leaf-results.txt \
-            | awk '{print $2}' | sed 's/@[^@]*$//' | sed "s#^${META_PREFIX}##" | paste -sd, -)
-          { echo "present_leaves=$PRESENT_LEAVES"; echo "meta_pkg=$META_PKG"; } >> "$GITHUB_OUTPUT"
+          # Slugs (leaf name minus meta prefix) of every leaf now on npm (OK or
+          # already-present SKIP). marker line: "OK   <pkg>@<ver>" where <pkg>
+          # itself starts with '@' (e.g. @haybarn/ext-a5-h1-5-3-linux-x64) — strip
+          # the version (after the LAST '@'), then the meta prefix. Split native
+          # vs wasm: native slugs become the meta's optionalDependencies; wasm
+          # slugs (no npm os/cpu) are only documented in the meta README.
+          ALL_SLUGS=$(grep -E '^(OK|SKIP) ' /tmp/leaf-results.txt \
+            | awk '{print $2}' | sed 's/@[^@]*$//' | sed "s#^${META_PREFIX}##")
+          PRESENT_LEAVES=$(printf '%s\n' "$ALL_SLUGS" | grep -v '^wasm-' | paste -sd, -)
+          WASM_LEAVES=$(printf '%s\n' "$ALL_SLUGS" | grep '^wasm-' | paste -sd, -)
+          { echo "present_leaves=$PRESENT_LEAVES"; echo "wasm_leaves=$WASM_LEAVES";
+            echo "meta_pkg=$META_PKG"; } >> "$GITHUB_OUTPUT"
           [[ "$fl" -eq 0 ]]
 
       - name: Build + publish meta (per-extension mode)
@@ -409,6 +413,7 @@ jobs:
           EXT_COMMIT:        ${{ steps.meta.outputs.ext_commit }}
           EXT_VERSION_LABEL: ${{ inputs.extension_version_label }}
           PRESENT_LEAVES:    ${{ steps.leaves.outputs.present_leaves }}
+          WASM_LEAVES:       ${{ steps.leaves.outputs.wasm_leaves }}
           META_PKG:          ${{ steps.leaves.outputs.meta_pkg }}
           # Pass-through to npm_build_meta.py for the `license` field in
           # the generated package.json. Empty → script defaults to "MIT".
@@ -424,7 +429,7 @@ jobs:
           export PKG="$META_PKG"
           export HAYBARN_VERSION="$HV"
           export HAYBARN_METADATA="$STAGE/haybarn-metadata.json"
-          export VERSION EXTENSION PRESENT_LEAVES
+          export VERSION EXTENSION PRESENT_LEAVES WASM_LEAVES
           mkdir -p "$STAGE"
           python3 ci-tools/scripts/publish/generate_haybarn_metadata.py \
             --extension "$EXTENSION" \

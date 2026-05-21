@@ -390,8 +390,11 @@ jobs:
 
           # present_leaves = slugs (leaf name minus the meta prefix) of every
           # leaf that is now on npm (OK or already-present SKIP), for the meta.
+          # marker line: "OK   <pkg>@<ver>" where <pkg> itself starts with '@'
+          # (e.g. @haybarn/ext-a5-h1-5-3-linux-x64). Strip the version (after the
+          # LAST '@'), then the meta prefix, leaving the platform slug.
           PRESENT_LEAVES=$(grep -E '^(OK|SKIP) ' /tmp/leaf-results.txt \
-            | awk '{print $2}' | sed 's/@.*$//' | sed "s#^${META_PREFIX}##" | paste -sd, -)
+            | awk '{print $2}' | sed 's/@[^@]*$//' | sed "s#^${META_PREFIX}##" | paste -sd, -)
           { echo "present_leaves=$PRESENT_LEAVES"; echo "meta_pkg=$META_PKG"; } >> "$GITHUB_OUTPUT"
           [[ "$fl" -eq 0 ]]
 

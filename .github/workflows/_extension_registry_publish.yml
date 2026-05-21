@@ -302,11 +302,16 @@ jobs:
             VERSION="$IN_VERSION"
           else
             VERSION=$(python3 -c "
-          import glob, json
-          ps = glob.glob('leaves/*/package.json')
+          import glob, json, tarfile
+          ps = glob.glob('leaves/**/*.tar.gz', recursive=True)
           if not ps:
-              raise SystemExit('no leaf package.json found')
-          print(json.load(open(ps[0]))['version'])
+              raise SystemExit('no leaf tarball found')
+          with tarfile.open(ps[0]) as t:
+              for m in t:
+                  if m.name.endswith('package.json'):
+                      print(json.load(t.extractfile(m))['version']); break
+              else:
+                  raise SystemExit('package.json not found in tar')
           ")
           fi
           if [[ -n "${IN_EXT_COMMIT:-}" ]]; then
@@ -314,9 +319,9 @@ jobs:
           else
             EXT_COMMIT=$(python3 -c "
           import glob, json, tarfile
-          ps = glob.glob('leaves/*/npm-leaf.tar.gz')
+          ps = glob.glob('leaves/**/*.tar.gz', recursive=True)
           if not ps:
-              raise SystemExit('no npm-leaf.tar.gz found')
+              raise SystemExit('no leaf tarball found')
           with tarfile.open(ps[0]) as t:
               for m in t:
                   if m.name.endswith('package.json'):
@@ -344,15 +349,19 @@ jobs:
           HV="${DV#v}"
           HSUFFIX="h${HV//./-}"
           META_PKG="@haybarn/ext-${EXTENSION}-${HSUFFIX}"
-          PRESENT_LEAVES=""
-          ART_PREFIX="leaves/npm-leaf-${EXTENSION}-${DV}-"
           META_PREFIX="${META_PKG}-"
-          for art in "${ART_PREFIX}"*; do
-            [[ -d "$art" ]] || continue
-            ARCH="${art#"$ART_PREFIX"}"
-            echo "::group::leaf for $ARCH"
+          PRESENT_LEAVES=""
+          # Iterate every leaf tarball regardless of how the deploy bundled the
+          # artifacts: the legacy one-artifact-per-arch shape
+          # (leaves/npm-leaf-<ext>-<dv>-<arch>/npm-leaf.tar.gz) and the
+          # consolidated single-artifact shape
+          # (leaves/npm-leaf-<ext>-<dv>-all/<leaf>.tar.gz) both match. The leaf's
+          # real package name + platform come from inside its package.json, so
+          # the tarball's filename / dir is just a label.
+          while IFS= read -r tgz; do
+            echo "::group::leaf $(basename "$tgz")"
             STAGE=$(mktemp -d)
-            tar -xzf "$art/npm-leaf.tar.gz" -C "$STAGE"
+            tar -xzf "$tgz" -C "$STAGE"
             LEAF_NAME=$(python3 -c "import json; print(json.load(open('$STAGE/package.json'))['name'])")
             echo "publishing $LEAF_NAME @ $VERSION"
             if ! (cd "$STAGE" && npm publish --provenance --access public --tag latest 2>/tmp/npm.err); then
@@ -370,7 +379,7 @@ jobs:
               PRESENT_LEAVES="$SLUG"
             fi
             echo "::endgroup::"
-          done
+          done < <(find leaves -name '*.tar.gz' | sort)
           if [[ -z "$PRESENT_LEAVES" ]]; then
             echo "::error::no npm leaves found"; exit 1
           fi

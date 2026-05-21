@@ -340,50 +340,60 @@ jobs:
         env:
           NPM_CONFIG_PROVENANCE: 'true'
           NODE_AUTH_TOKEN: ${{ secrets.HAYBARN_NPM_TOKEN }}
-          VERSION:   ${{ steps.meta.outputs.version }}
+          NPM_PUBLISH_CONCURRENCY: ${{ vars.NPM_PUBLISH_CONCURRENCY || '8' }}
           EXTENSION: ${{ inputs.extension_name }}
           DV:        ${{ inputs.duckdb_version }}
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           HV="${DV#v}"
           HSUFFIX="h${HV//./-}"
           META_PKG="@haybarn/ext-${EXTENSION}-${HSUFFIX}"
           META_PREFIX="${META_PKG}-"
-          PRESENT_LEAVES=""
-          # Iterate every leaf tarball regardless of how the deploy bundled the
-          # artifacts: the legacy one-artifact-per-arch shape
-          # (leaves/npm-leaf-<ext>-<dv>-<arch>/npm-leaf.tar.gz) and the
-          # consolidated single-artifact shape
-          # (leaves/npm-leaf-<ext>-<dv>-all/<leaf>.tar.gz) both match. The leaf's
-          # real package name + platform come from inside its package.json, so
-          # the tarball's filename / dir is just a label.
+
+          # Extract every leaf tarball into its own dir. Matches both the legacy
+          # one-artifact-per-arch shape (leaves/<dir>/npm-leaf.tar.gz) and the
+          # consolidated single-artifact shape (leaves/<dir>/<leaf>.tar.gz).
+          mkdir -p staged
+          n=0
           while IFS= read -r tgz; do
-            echo "::group::leaf $(basename "$tgz")"
-            STAGE=$(mktemp -d)
-            tar -xzf "$tgz" -C "$STAGE"
-            LEAF_NAME=$(python3 -c "import json; print(json.load(open('$STAGE/package.json'))['name'])")
-            echo "publishing $LEAF_NAME @ $VERSION"
-            if ! (cd "$STAGE" && npm publish --provenance --access public --tag latest 2>/tmp/npm.err); then
-              if grep -qiE 'previously published|EPUBLISHCONFLICT|cannot publish over' /tmp/npm.err; then
-                echo "::notice::$LEAF_NAME@$VERSION already published — skipping"
-              else
-                cat /tmp/npm.err
-                echo "::error::npm publish failed for $LEAF_NAME@$VERSION"; exit 1
-              fi
-            fi
-            SLUG="${LEAF_NAME#"$META_PREFIX"}"
-            if [[ -n "$PRESENT_LEAVES" ]]; then
-              PRESENT_LEAVES="${PRESENT_LEAVES},${SLUG}"
-            else
-              PRESENT_LEAVES="$SLUG"
-            fi
-            echo "::endgroup::"
+            d="staged/$n"; mkdir -p "$d"; tar -xzf "$tgz" -C "$d"; n=$((n+1))
           done < <(find leaves -name '*.tar.gz' | sort)
-          if [[ -z "$PRESENT_LEAVES" ]]; then
-            echo "::error::no npm leaves found"; exit 1
-          fi
+          [[ "$n" -gt 0 ]] || { echo "::error::no npm leaves found"; exit 1; }
+
+          # npm publishes are independent per package, so fan them out (same as
+          # bundled mode). Concurrency capped via NPM_PUBLISH_CONCURRENCY (npm
+          # rate limit + each --provenance publish does an OIDC exchange +
+          # sigstore signing). Each task uses its own temp error file and emits
+          # one OK/SKIP/FAIL marker the aggregation greps.
+          npm_publish_one() {
+            d="$1"
+            pkg=$(python3 -c "import json; print(json.load(open('$d/package.json'))['name'])")
+            ver=$(python3 -c "import json; print(json.load(open('$d/package.json'))['version'])")
+            err=$(mktemp)
+            if (cd "$d" && npm publish --provenance --access public --tag latest 2>"$err"); then
+              echo "OK   $pkg@$ver"
+            elif grep -qiE 'previously published|EPUBLISHCONFLICT|cannot publish over' "$err"; then
+              echo "SKIP $pkg@$ver"
+            else
+              echo "FAIL $pkg@$ver"; sed 's/^/    /' "$err"
+              echo "::error::publish failed for $pkg@$ver"
+            fi
+            rm -f "$err"
+          }
+          export -f npm_publish_one
+          find staged -mindepth 1 -maxdepth 1 -type d -print0 \
+            | xargs -0 -P "$NPM_PUBLISH_CONCURRENCY" -I{} bash -c 'npm_publish_one "$1"' _ {} \
+            | tee /tmp/leaf-results.txt
+          fl=$(grep -c '^FAIL ' /tmp/leaf-results.txt || true)
+          echo "leaves: ok=$(grep -c '^OK ' /tmp/leaf-results.txt || true) skip=$(grep -c '^SKIP ' /tmp/leaf-results.txt || true) fail=$fl"
+
+          # present_leaves = slugs (leaf name minus the meta prefix) of every
+          # leaf that is now on npm (OK or already-present SKIP), for the meta.
+          PRESENT_LEAVES=$(grep -E '^(OK|SKIP) ' /tmp/leaf-results.txt \
+            | awk '{print $2}' | sed 's/@.*$//' | sed "s#^${META_PREFIX}##" | paste -sd, -)
           { echo "present_leaves=$PRESENT_LEAVES"; echo "meta_pkg=$META_PKG"; } >> "$GITHUB_OUTPUT"
+          [[ "$fl" -eq 0 ]]
 
       - name: Build + publish meta (per-extension mode)
         if: ${{ inputs.artifact_shape == 'per-extension' }}

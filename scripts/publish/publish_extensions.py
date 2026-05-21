@@ -461,7 +461,36 @@ def main(argv: list[str]) -> int:
             gpg_sign(manifest_path, gpg_pass, gpg_key_id)
             gpg_sign(current_path, gpg_pass, gpg_key_id)
 
-        # 4. pip wheel + npm leaf (skip wasm + windows_amd64_mingw; gated on channels)
+        # 4a. WebAssembly leaves (per-extension / community only). npm has no
+        # wasm os/cpu, so these can't be meta optionalDependencies — they're
+        # standalone packages installed by name for duckdb-wasm. We ship the
+        # signed-but-UNCOMPRESSED .duckdb_extension.wasm (npm gzips the tarball;
+        # duckdb-wasm consumes raw wasm bytes). Returns (ext, None) so the wasm
+        # leaf is NEVER added to the meta's optionalDependencies.
+        if is_wasm:
+            if want_npm and not bundled:
+                variant = arch[len("wasm_"):] if arch.startswith("wasm_") else arch
+                leaf_suffix = arch.replace("_", "-")  # wasm_mvp -> wasm-mvp
+                leaf_pkg = npm_leaf_pkg_name(ext, args.haybarn_version, leaf_suffix)
+                leaf_stage = npm_leaves_dir / leaf_pkg.replace("/", "_")
+                (leaf_stage / "bin").mkdir(parents=True, exist_ok=True)
+                (leaf_stage / "bin" / f"{ext}.duckdb_extension.wasm").write_bytes(signed_bytes)
+                shutil.copy(meta_path, leaf_stage / "haybarn-metadata.json")
+                env = dict(os.environ,
+                           STAGE=str(leaf_stage), PKG=leaf_pkg, VERSION=calver, EXTENSION=ext,
+                           HAYBARN_VERSION=args.haybarn_version, WASM_VARIANT=variant,
+                           LICENSE=args.license_str,
+                           EXTENSION_DESCRIPTION=args.description,
+                           EXTENSION_SOURCE_REPO=args.source_repo,
+                           HAYBARN_METADATA=str(leaf_stage / "haybarn-metadata.json"))
+                run(["python3", str(SCRIPT_DIR / "npm_build_leaf.py")], env=env)
+                tarball = npm_tarballs_dir / f"{leaf_pkg.replace('/', '_')}.tar.gz"
+                with tarfile.open(tarball, "w:gz") as t:
+                    for child in sorted(leaf_stage.iterdir()):
+                        t.add(child, arcname=child.name)
+            return ext, None
+
+        # 4b. pip wheel + native npm leaf (skip windows_amd64_mingw; gated on channels)
         plat = PLATMAP.get(arch)
         if plat is None:
             return ext, None

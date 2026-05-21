@@ -63,6 +63,7 @@ def render_meta_readme(
     ext_source_repo: str,
     license_id: str,
     present_leaves: list,
+    wasm_leaves: list,
     is_community: bool,
 ) -> str:
     """Rich README for the user-facing meta-package."""
@@ -120,8 +121,43 @@ def render_meta_readme(
         '',
         '## Available platforms (this version)',
         '',
+        f"Installed automatically by `npm install {pkg}` (npm picks the one "
+        f"matching your `os`/`cpu`/`libc`):" if present_leaves else
+        "_(no native platform leaves were built this run)_",
+        '',
         leaves_md,
         '',
+    ]
+    # WebAssembly builds: npm can't auto-select them (no wasm os/cpu), so they
+    # are separate packages you install by name and hand to duckdb-wasm.
+    if wasm_leaves:
+        wasm_pkgs = [
+            f"@haybarn/ext-{extension}-h{haybarn_version.replace('.', '-')}-{slug}"
+            for slug in wasm_leaves
+        ]
+        first = wasm_pkgs[0]
+        parts += [
+            '## WebAssembly (duckdb-wasm)',
+            '',
+            "Also built for [duckdb-wasm](https://github.com/duckdb/duckdb-wasm). "
+            "These are **not** installed by the meta above (npm has no wasm "
+            "`os`/`cpu` to match) — install the variant matching your duckdb-wasm "
+            "bundle (`mvp` / `eh` / `threads`) and point duckdb-wasm at the bundled "
+            "asset:",
+            '',
+            "\n".join(f"- `{p}`" for p in wasm_pkgs),
+            '',
+            '```sh',
+            f"npm install {first}",
+            '```',
+            '```js',
+            f"import extUrl from '{first}/bin/{extension}.duckdb_extension.wasm?url';",
+            f"await conn.query(`INSTALL {extension} FROM '${{extUrl}}'`);",
+            f"await conn.query(`LOAD {extension}`);",
+            '```',
+            '',
+        ]
+    parts += [
         '## Use it',
         '',
         f"Once installed, the `.duckdb_extension` binary lands in your project's "
@@ -171,12 +207,15 @@ def main() -> int:
     metadata_blob = json.loads(metadata_path.read_text())
 
     present_leaves = [p.strip() for p in present.split(",") if p.strip()]
-    if not present_leaves:
-        print("npm_build_meta: no PRESENT_LEAVES — meta with no leaves would "
-              "be useless. Aborting rather than publishing a broken meta.",
+    wasm_leaves = [p.strip() for p in os.environ.get("WASM_LEAVES", "").split(",") if p.strip()]
+    if not present_leaves and not wasm_leaves:
+        print("npm_build_meta: no PRESENT_LEAVES/WASM_LEAVES — meta with no leaves "
+              "would be useless. Aborting rather than publishing a broken meta.",
               file=sys.stderr)
         return 2
 
+    # Only NATIVE leaves become optionalDependencies (npm auto-resolves them via
+    # os/cpu). wasm leaves are documented in the README but never auto-installed.
     optional = {f"{pkg}-{slug}": version for slug in present_leaves}
 
     # See npm_build_leaf.py — repository URL has to match the source
@@ -241,6 +280,7 @@ def main() -> int:
         extension_description=extension_description,
         ext_source_repo=ext_source_repo,
         license_id=license_id, present_leaves=present_leaves,
+        wasm_leaves=wasm_leaves,
         is_community=is_community,
     )
     readme_out = stage / "README.md"

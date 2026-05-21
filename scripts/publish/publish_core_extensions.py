@@ -80,16 +80,20 @@ def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
 
 
 def sign_and_compress_binary(ext_path: pathlib.Path, arch: str, signing_pk: str,
-                             work_dir: pathlib.Path) -> pathlib.Path:
+                             work_dir: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
     """Mirror of extension-upload-single.sh's sign+compress dance, isolated
     so we can do it for each binary while keeping the original artifact
-    intact. Returns the compressed output path."""
+    intact. Returns (compressed, signed_uncompressed): the R2/pypi channels
+    ship the compressed binary; the npm leaf ships the signed-but-uncompressed
+    one (npm gzips the tarball itself, so shipping .gz double-compresses)."""
     is_wasm = arch.startswith("wasm")
     suffix = "wasm" if is_wasm else "gz"
     dest = work_dir / f"{ext_path.stem}.duckdb_extension.{suffix}"
+    # The signed-but-uncompressed binary, kept for the npm leaf.
+    signed = work_dir / f"{ext_path.stem}.duckdb_extension"
 
     # Copy → truncate last 256 bytes (placeholder signature footer)
-    append = work_dir / "work.append"
+    append = signed
     shutil.copy(ext_path, append)
     with append.open("r+b") as f:
         f.seek(-256, 2)
@@ -123,9 +127,10 @@ def sign_and_compress_binary(ext_path: pathlib.Path, arch: str, signing_pk: str,
     else:
         with append.open("rb") as src, dest.open("wb") as dst:
             run(["gzip"], stdin=src, stdout=dst)
-    append.unlink()
+    # NB: do NOT unlink `append` — it is the signed-uncompressed binary the
+    # npm leaf ships. gzip/brotli above read it via stdin and leave it intact.
     hash_file.unlink()
-    return dest
+    return dest, signed
 
 
 def sha256_hex(path: pathlib.Path) -> str:
@@ -315,7 +320,7 @@ def main(argv: list[str]) -> int:
                     work = work_root / arch / ext
                     work.mkdir(parents=True, exist_ok=True)
 
-                    compressed = sign_and_compress_binary(ext_file, arch, signing_pk, work)
+                    compressed, signed_bin = sign_and_compress_binary(ext_file, arch, signing_pk, work)
                     sha = sha256_hex(compressed)
                     print(f"  sha256: {sha}")
 
@@ -397,7 +402,10 @@ def main(argv: list[str]) -> int:
                     # npm rejects '/' in directory names of npm pkg paths
                     leaf_stage = npm_leaves_dir / leaf_pkg.replace("/", "_")
                     (leaf_stage / "bin").mkdir(parents=True, exist_ok=True)
-                    shutil.copy(compressed, leaf_stage / "bin" / compressed.name)
+                    # npm ships the signed-but-uncompressed .duckdb_extension —
+                    # npm already gzips the tarball, so the .gz would be
+                    # double-compressed (and re-decompressed on install).
+                    shutil.copy(signed_bin, leaf_stage / "bin" / signed_bin.name)
                     shutil.copy(meta_path,  leaf_stage / "haybarn-metadata.json")
                     env = dict(os.environ,
                                STAGE=str(leaf_stage), PKG=leaf_pkg,

@@ -396,8 +396,14 @@ jobs:
           # slugs (no npm os/cpu) are only documented in the meta README.
           ALL_SLUGS=$(grep -E '^(OK|SKIP) ' /tmp/leaf-results.txt \
             | awk '{print $2}' | sed 's/@[^@]*$//' | sed "s#^${META_PREFIX}##")
-          PRESENT_LEAVES=$(printf '%s\n' "$ALL_SLUGS" | grep -v '^wasm-' | paste -sd, -)
-          WASM_LEAVES=$(printf '%s\n' "$ALL_SLUGS" | grep '^wasm-' | paste -sd, -)
+          # `grep` exits 1 when it matches nothing — under set -e + pipefail
+          # (the run shell's default) that aborts the step. A native-only
+          # extension has NO wasm leaves (WASM_LEAVES grep matches nothing); a
+          # hypothetical wasm-only one has no native leaves (PRESENT_LEAVES grep
+          # matches nothing). Guard both so an empty side yields "" instead of
+          # killing the step before the meta build.
+          PRESENT_LEAVES=$(printf '%s\n' "$ALL_SLUGS" | { grep -v '^wasm-' || true; } | paste -sd, -)
+          WASM_LEAVES=$(printf '%s\n' "$ALL_SLUGS" | { grep '^wasm-' || true; } | paste -sd, -)
           { echo "present_leaves=$PRESENT_LEAVES"; echo "wasm_leaves=$WASM_LEAVES";
             echo "meta_pkg=$META_PKG"; } >> "$GITHUB_OUTPUT"
           [[ "$fl" -eq 0 ]]

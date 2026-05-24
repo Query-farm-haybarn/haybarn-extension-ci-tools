@@ -1466,11 +1466,20 @@ jobs:
         shell: bash
         run: |
           VARIANT="${{ inputs.wasm_image_variant }}"
-          # wasm_threads (COI) Rust extensions need the nightly toolchain
-          # (-Z build-std + atomics); the rust-nightly image carries it.
-          # C++-only threaded builds are unaffected — same emsdk/vcpkg, only the
-          # Rust toolchain differs. base stays base.
-          if [ "${{ matrix.duckdb_arch }}" = "wasm_threads" ] && [ "$VARIANT" = "rust" ]; then
+          # All wasm Rust extensions use the nightly toolchain so `-Z build-std`
+          # (set below) can rebuild std with the nightly rustc, whose
+          # wasm32-unknown-emscripten default is *native* wasm exception handling.
+          # That must match the engine, which is compiled with -fwasm-exceptions.
+          # A Rust extension built against the *stable* precompiled std instead
+          # carries legacy emscripten EH trampolines
+          # (invoke_*/__resumeException/__cxa_find_matching_catch) that the
+          # native-EH engine never provides, so the extension's first
+          # exception-path call throws an opaque `TypeError: c is not a function`
+          # in the worker — silent on coi (built native-EH), fatal on eh
+          # (haybarn-wasm#9). wasm_threads additionally needs shared-memory
+          # atomics (set below). C++-only builds are unaffected — same
+          # emsdk/vcpkg, only the Rust toolchain differs; base stays base.
+          if [ "$VARIANT" = "rust" ] && { [ "${{ matrix.duckdb_arch }}" = "wasm_eh" ] || [ "${{ matrix.duckdb_arch }}" = "wasm_threads" ]; }; then
             VARIANT="rust-nightly"
           fi
           IMG="ghcr.io/${{ inputs.prebuilt_image_namespace }}/haybarn-wasm-${VARIANT}:${{ inputs.prebuilt_image_tag }}"
@@ -1545,18 +1554,25 @@ jobs:
           SUBSET_EXTENSIONS_TESTS=${{ inputs.extensions_test_selection }}
           EOF
           echo '${{ inputs.test_config }}' | jq -r '.test_env_variables // {} | to_entries | map("\(.key)=\(.value)") | .[]' >> docker_env.txt
-          # wasm_threads (COI): build threaded Rust extensions with atomics.
-          # CARGO_TARGET_<triple>_RUSTFLAGS is target-scoped, so host
-          # build-scripts/proc-macros are NOT compiled with wasm atomics;
-          # CARGO_UNSTABLE_BUILD_STD rebuilds std with those features (needs the
-          # rust-nightly image + rust-src; nightly-only, hence gated to threads).
+          # eh + threads Rust extensions: rebuild std from source with the
+          # nightly toolchain so the whole binary uses native wasm exception
+          # handling, matching the -fwasm-exceptions engine. Building against the
+          # stable precompiled std instead emits legacy emscripten EH trampolines
+          # (invoke_*/__resumeException) the engine never provides, which throw
+          # `TypeError: c is not a function` at the first exception-path call on
+          # the eh (non-COI) variant (haybarn-wasm#9). Needs the rust-nightly
+          # image + rust-src (nightly-only); the image was selected above. mvp is
+          # left on stable — it has no -fwasm-exceptions and no shipped engine.
           # echo (not a heredoc) so each line is written flush-left — docker
           # --env-file rejects leading whitespace in a KEY=VALUE line.
+          if [ "${{ matrix.duckdb_arch }}" = "wasm_eh" ] || [ "${{ matrix.duckdb_arch }}" = "wasm_threads" ]; then
+            echo 'CARGO_UNSTABLE_BUILD_STD=std,panic_abort' >> docker_env.txt
+          fi
+          # wasm_threads (COI) additionally needs shared-memory atomics.
+          # CARGO_TARGET_<triple>_RUSTFLAGS is target-scoped, so host
+          # build-scripts/proc-macros are NOT compiled with wasm atomics.
           if [ "${{ matrix.duckdb_arch }}" = "wasm_threads" ]; then
-            {
-              echo 'CARGO_TARGET_WASM32_UNKNOWN_EMSCRIPTEN_RUSTFLAGS=-Ctarget-feature=+atomics,+bulk-memory,+mutable-globals'
-              echo 'CARGO_UNSTABLE_BUILD_STD=std,panic_abort'
-            } >> docker_env.txt
+            echo 'CARGO_TARGET_WASM32_UNKNOWN_EMSCRIPTEN_RUSTFLAGS=-Ctarget-feature=+atomics,+bulk-memory,+mutable-globals' >> docker_env.txt
           fi
 
       - name: Downgrade AWS cli

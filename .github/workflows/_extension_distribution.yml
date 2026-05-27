@@ -413,8 +413,47 @@ jobs:
         with:
           repository: ${{ inputs.override_repository }}
           ref: ${{ inputs.override_ref }}
-          fetch-depth: 0
-          submodules: recursive   # Haybarn: many real community extensions (h3, scrooge, etc.) have submodules that are load-bearing for the build (CMakeLists.txt does `add_subdirectory(<submodule>)`). The old `submodules: false` optimization was safe for the canonical extension-template (no real submodules) but failed for real extensions: e.g. h3's CMakeLists does `add_subdirectory(h3)` against an h3-library submodule. Recursive is slower per leg but correct in the general case.
+          # Shallow checkout: the extension build only needs the tip commit.
+          # We still fetch-tags because some extensions derive their version
+          # via `git describe --tags`. submodules:false here is deliberate —
+          # the next step inits them selectively (see below). The recursive
+          # full-depth clone this replaced wasted huge effort: it pulled the
+          # `duckdb` engine + `extension-ci-tools` submodules (duckdb dragging
+          # in the whole engine and its own submodules) only for the following
+          # steps to `rm -rf duckdb` + re-clone the Haybarn engine and check
+          # out extension-ci-tools/ explicitly.
+          fetch-depth: 1
+          fetch-tags: true
+          submodules: false
+
+      - name: Init extension submodules (shallow; skip duckdb + extension-ci-tools)
+        if: ${{inputs.override_repository != ''}}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -f .gitmodules ] || { echo "no .gitmodules — nothing to init"; exit 0; }
+          # Real community extensions vendor load-bearing submodules that CMake
+          # add_subdirectory()s (e.g. h3's h3-library) — init those RECURSIVELY
+          # (parity with the old `submodules: recursive`; a kept submodule may
+          # nest its own), but shallow (--depth 1). Skip the `duckdb` engine and
+          # `extension-ci-tools`: later steps rm -rf duckdb + re-clone the
+          # Haybarn engine and check out extension-ci-tools/ explicitly, so
+          # fetching them here (duckdb alone is enormous, and recurses into the
+          # whole engine) is pure waste. The regex drops them whether top-level
+          # (`duckdb`) or nested (`extern/duckdb`) so it fails closed; this
+          # build also hard-requires the engine at top-level ./duckdb anyway
+          # (see the `rm -rf duckdb` step below).
+          mapfile -t paths < <(
+            git config --file .gitmodules --get-regexp '^submodule\..*\.path$' \
+              | awk '{print $2}' \
+              | grep -vxE '(.*/)?(duckdb|extension-ci-tools)' || true
+          )
+          if [ "${#paths[@]}" -eq 0 ]; then
+            echo "no non-engine submodules to init"
+            exit 0
+          fi
+          printf 'init submodule: %s\n' "${paths[@]}"
+          git submodule update --init --recursive --depth 1 -- "${paths[@]}"
 
       - uses: actions/checkout@v6
         name: Checkout current repository
@@ -736,8 +775,47 @@ jobs:
         with:
           repository: ${{ inputs.override_repository }}
           ref: ${{ inputs.override_ref }}
-          fetch-depth: 0
-          submodules: recursive   # Haybarn: many real community extensions (h3, scrooge, etc.) have submodules that are load-bearing for the build (CMakeLists.txt does `add_subdirectory(<submodule>)`). The old `submodules: false` optimization was safe for the canonical extension-template (no real submodules) but failed for real extensions: e.g. h3's CMakeLists does `add_subdirectory(h3)` against an h3-library submodule. Recursive is slower per leg but correct in the general case.
+          # Shallow checkout: the extension build only needs the tip commit.
+          # We still fetch-tags because some extensions derive their version
+          # via `git describe --tags`. submodules:false here is deliberate —
+          # the next step inits them selectively (see below). The recursive
+          # full-depth clone this replaced wasted huge effort: it pulled the
+          # `duckdb` engine + `extension-ci-tools` submodules (duckdb dragging
+          # in the whole engine and its own submodules) only for the following
+          # steps to `rm -rf duckdb` + re-clone the Haybarn engine and check
+          # out extension-ci-tools/ explicitly.
+          fetch-depth: 1
+          fetch-tags: true
+          submodules: false
+
+      - name: Init extension submodules (shallow; skip duckdb + extension-ci-tools)
+        if: ${{inputs.override_repository != ''}}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -f .gitmodules ] || { echo "no .gitmodules — nothing to init"; exit 0; }
+          # Real community extensions vendor load-bearing submodules that CMake
+          # add_subdirectory()s (e.g. h3's h3-library) — init those RECURSIVELY
+          # (parity with the old `submodules: recursive`; a kept submodule may
+          # nest its own), but shallow (--depth 1). Skip the `duckdb` engine and
+          # `extension-ci-tools`: later steps rm -rf duckdb + re-clone the
+          # Haybarn engine and check out extension-ci-tools/ explicitly, so
+          # fetching them here (duckdb alone is enormous, and recurses into the
+          # whole engine) is pure waste. The regex drops them whether top-level
+          # (`duckdb`) or nested (`extern/duckdb`) so it fails closed; this
+          # build also hard-requires the engine at top-level ./duckdb anyway
+          # (see the `rm -rf duckdb` step below).
+          mapfile -t paths < <(
+            git config --file .gitmodules --get-regexp '^submodule\..*\.path$' \
+              | awk '{print $2}' \
+              | grep -vxE '(.*/)?(duckdb|extension-ci-tools)' || true
+          )
+          if [ "${#paths[@]}" -eq 0 ]; then
+            echo "no non-engine submodules to init"
+            exit 0
+          fi
+          printf 'init submodule: %s\n' "${paths[@]}"
+          git submodule update --init --recursive --depth 1 -- "${paths[@]}"
 
       - uses: actions/checkout@v6
         name: Checkout current repository
@@ -1053,8 +1131,47 @@ jobs:
         with:
           repository: ${{ inputs.override_repository }}
           ref: ${{ inputs.override_ref }}
-          fetch-depth: 0
-          submodules: recursive   # Haybarn: many real community extensions (h3, scrooge, etc.) have submodules that are load-bearing for the build (CMakeLists.txt does `add_subdirectory(<submodule>)`). The old `submodules: false` optimization was safe for the canonical extension-template (no real submodules) but failed for real extensions: e.g. h3's CMakeLists does `add_subdirectory(h3)` against an h3-library submodule. Recursive is slower per leg but correct in the general case.
+          # Shallow checkout: the extension build only needs the tip commit.
+          # We still fetch-tags because some extensions derive their version
+          # via `git describe --tags`. submodules:false here is deliberate —
+          # the next step inits them selectively (see below). The recursive
+          # full-depth clone this replaced wasted huge effort: it pulled the
+          # `duckdb` engine + `extension-ci-tools` submodules (duckdb dragging
+          # in the whole engine and its own submodules) only for the following
+          # steps to `rm -rf duckdb` + re-clone the Haybarn engine and check
+          # out extension-ci-tools/ explicitly.
+          fetch-depth: 1
+          fetch-tags: true
+          submodules: false
+
+      - name: Init extension submodules (shallow; skip duckdb + extension-ci-tools)
+        if: ${{inputs.override_repository != ''}}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -f .gitmodules ] || { echo "no .gitmodules — nothing to init"; exit 0; }
+          # Real community extensions vendor load-bearing submodules that CMake
+          # add_subdirectory()s (e.g. h3's h3-library) — init those RECURSIVELY
+          # (parity with the old `submodules: recursive`; a kept submodule may
+          # nest its own), but shallow (--depth 1). Skip the `duckdb` engine and
+          # `extension-ci-tools`: later steps rm -rf duckdb + re-clone the
+          # Haybarn engine and check out extension-ci-tools/ explicitly, so
+          # fetching them here (duckdb alone is enormous, and recurses into the
+          # whole engine) is pure waste. The regex drops them whether top-level
+          # (`duckdb`) or nested (`extern/duckdb`) so it fails closed; this
+          # build also hard-requires the engine at top-level ./duckdb anyway
+          # (see the `rm -rf duckdb` step below).
+          mapfile -t paths < <(
+            git config --file .gitmodules --get-regexp '^submodule\..*\.path$' \
+              | awk '{print $2}' \
+              | grep -vxE '(.*/)?(duckdb|extension-ci-tools)' || true
+          )
+          if [ "${#paths[@]}" -eq 0 ]; then
+            echo "no non-engine submodules to init"
+            exit 0
+          fi
+          printf 'init submodule: %s\n' "${paths[@]}"
+          git submodule update --init --recursive --depth 1 -- "${paths[@]}"
 
       - uses: actions/checkout@v6
         name: Checkout current repository
@@ -1363,8 +1480,47 @@ jobs:
         with:
           repository: ${{ inputs.override_repository }}
           ref: ${{ inputs.override_ref }}
-          fetch-depth: 0
-          submodules: recursive   # Haybarn: many real community extensions (h3, scrooge, etc.) have submodules that are load-bearing for the build (CMakeLists.txt does `add_subdirectory(<submodule>)`). The old `submodules: false` optimization was safe for the canonical extension-template (no real submodules) but failed for real extensions: e.g. h3's CMakeLists does `add_subdirectory(h3)` against an h3-library submodule. Recursive is slower per leg but correct in the general case.
+          # Shallow checkout: the extension build only needs the tip commit.
+          # We still fetch-tags because some extensions derive their version
+          # via `git describe --tags`. submodules:false here is deliberate —
+          # the next step inits them selectively (see below). The recursive
+          # full-depth clone this replaced wasted huge effort: it pulled the
+          # `duckdb` engine + `extension-ci-tools` submodules (duckdb dragging
+          # in the whole engine and its own submodules) only for the following
+          # steps to `rm -rf duckdb` + re-clone the Haybarn engine and check
+          # out extension-ci-tools/ explicitly.
+          fetch-depth: 1
+          fetch-tags: true
+          submodules: false
+
+      - name: Init extension submodules (shallow; skip duckdb + extension-ci-tools)
+        if: ${{inputs.override_repository != ''}}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -f .gitmodules ] || { echo "no .gitmodules — nothing to init"; exit 0; }
+          # Real community extensions vendor load-bearing submodules that CMake
+          # add_subdirectory()s (e.g. h3's h3-library) — init those RECURSIVELY
+          # (parity with the old `submodules: recursive`; a kept submodule may
+          # nest its own), but shallow (--depth 1). Skip the `duckdb` engine and
+          # `extension-ci-tools`: later steps rm -rf duckdb + re-clone the
+          # Haybarn engine and check out extension-ci-tools/ explicitly, so
+          # fetching them here (duckdb alone is enormous, and recurses into the
+          # whole engine) is pure waste. The regex drops them whether top-level
+          # (`duckdb`) or nested (`extern/duckdb`) so it fails closed; this
+          # build also hard-requires the engine at top-level ./duckdb anyway
+          # (see the `rm -rf duckdb` step below).
+          mapfile -t paths < <(
+            git config --file .gitmodules --get-regexp '^submodule\..*\.path$' \
+              | awk '{print $2}' \
+              | grep -vxE '(.*/)?(duckdb|extension-ci-tools)' || true
+          )
+          if [ "${#paths[@]}" -eq 0 ]; then
+            echo "no non-engine submodules to init"
+            exit 0
+          fi
+          printf 'init submodule: %s\n' "${paths[@]}"
+          git submodule update --init --recursive --depth 1 -- "${paths[@]}"
 
       - uses: actions/checkout@v6
         name: Checkout current repository

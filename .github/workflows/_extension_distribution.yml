@@ -443,7 +443,13 @@ jobs:
           # (`duckdb`) or nested (`extern/duckdb`) so it fails closed; this
           # build also hard-requires the engine at top-level ./duckdb anyway
           # (see the `rm -rf duckdb` step below).
-          mapfile -t paths < <(
+          # No `mapfile`: macOS runners ship bash 3.2 (it's a bash 4.0+
+          # builtin). Read into the array with a portable while-loop; process
+          # substitution keeps the loop in the current shell so `paths` lives on.
+          paths=()
+          while IFS= read -r p; do
+            [ -n "$p" ] && paths+=("$p")
+          done < <(
             git config --file .gitmodules --get-regexp '^submodule\..*\.path$' \
               | awk '{print $2}' \
               | grep -vxE '(.*/)?(duckdb|extension-ci-tools)' || true
@@ -805,7 +811,13 @@ jobs:
           # (`duckdb`) or nested (`extern/duckdb`) so it fails closed; this
           # build also hard-requires the engine at top-level ./duckdb anyway
           # (see the `rm -rf duckdb` step below).
-          mapfile -t paths < <(
+          # No `mapfile`: macOS runners ship bash 3.2 (it's a bash 4.0+
+          # builtin). Read into the array with a portable while-loop; process
+          # substitution keeps the loop in the current shell so `paths` lives on.
+          paths=()
+          while IFS= read -r p; do
+            [ -n "$p" ] && paths+=("$p")
+          done < <(
             git config --file .gitmodules --get-regexp '^submodule\..*\.path$' \
               | awk '{print $2}' \
               | grep -vxE '(.*/)?(duckdb|extension-ci-tools)' || true
@@ -1161,7 +1173,13 @@ jobs:
           # (`duckdb`) or nested (`extern/duckdb`) so it fails closed; this
           # build also hard-requires the engine at top-level ./duckdb anyway
           # (see the `rm -rf duckdb` step below).
-          mapfile -t paths < <(
+          # No `mapfile`: macOS runners ship bash 3.2 (it's a bash 4.0+
+          # builtin). Read into the array with a portable while-loop; process
+          # substitution keeps the loop in the current shell so `paths` lives on.
+          paths=()
+          while IFS= read -r p; do
+            [ -n "$p" ] && paths+=("$p")
+          done < <(
             git config --file .gitmodules --get-regexp '^submodule\..*\.path$' \
               | awk '{print $2}' \
               | grep -vxE '(.*/)?(duckdb|extension-ci-tools)' || true
@@ -1510,7 +1528,13 @@ jobs:
           # (`duckdb`) or nested (`extern/duckdb`) so it fails closed; this
           # build also hard-requires the engine at top-level ./duckdb anyway
           # (see the `rm -rf duckdb` step below).
-          mapfile -t paths < <(
+          # No `mapfile`: macOS runners ship bash 3.2 (it's a bash 4.0+
+          # builtin). Read into the array with a portable while-loop; process
+          # substitution keeps the loop in the current shell so `paths` lives on.
+          paths=()
+          while IFS= read -r p; do
+            [ -n "$p" ] && paths+=("$p")
+          done < <(
             git config --file .gitmodules --get-regexp '^submodule\..*\.path$' \
               | awk '{print $2}' \
               | grep -vxE '(.*/)?(duckdb|extension-ci-tools)' || true

@@ -334,9 +334,11 @@ jobs:
       # Haybarn-prefixed `haybarn-vX.Y.Z(-rcN)?` form falls through to the
       # v0.0.1 default, which makes the extension unloadable by haybarn-cli
       # ("built specifically for engine version 'v0.0.1'"). For tags like
-      # haybarn-v1.5.2-rc13 the engine still reports library_version=v1.5.2,
-      # so that's what extensions must embed.
-      OVERRIDE_GIT_DESCRIBE: ${{ startsWith(inputs.duckdb_version, 'haybarn-v1.5.2') && 'v1.5.2' || inputs.duckdb_version }}
+      # haybarn-v1.5.3-rc3 the engine still reports library_version=v1.5.3,
+      # so that's what extensions must embed. Add a new `haybarn-vX.Y.Z` →
+      # `vX.Y.Z` case here whenever the engine cuts a new minor (GHA
+      # expressions have no substring/regex strip).
+      OVERRIDE_GIT_DESCRIBE: ${{ startsWith(inputs.duckdb_version, 'haybarn-v1.5.3') && 'v1.5.3' || inputs.duckdb_version }}
       # VCPKG config
       VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
       VCPKG_TARGET_TRIPLET: ${{ matrix.vcpkg_target_triplet }}
@@ -525,7 +527,7 @@ jobs:
           DUCKDB_GIT_VERSION=${{ inputs.duckdb_version }}
           # Haybarn: forward the normalized version label into the container so
           # CMake embeds the right engine library_version in the extension binary.
-          OVERRIDE_GIT_DESCRIBE=${{ startsWith(inputs.duckdb_version, 'haybarn-v1.5.2') && 'v1.5.2' || inputs.duckdb_version }}
+          OVERRIDE_GIT_DESCRIBE=${{ startsWith(inputs.duckdb_version, 'haybarn-v1.5.3') && 'v1.5.3' || inputs.duckdb_version }}
           ENABLE_EXTENSION_AUTOINSTALL=1
           ENABLE_EXTENSION_AUTOLOADING=1
           EXTENSION_NAME=${{ inputs.extension_name }}
@@ -675,7 +677,7 @@ jobs:
       matrix: ${{fromJson(needs.generate_matrix.outputs.osx_matrix)}}
     env:
       # Haybarn: see comment in the linux job for why this is set.
-      OVERRIDE_GIT_DESCRIBE: ${{ startsWith(inputs.duckdb_version, 'haybarn-v1.5.2') && 'v1.5.2' || inputs.duckdb_version }}
+      OVERRIDE_GIT_DESCRIBE: ${{ startsWith(inputs.duckdb_version, 'haybarn-v1.5.3') && 'v1.5.3' || inputs.duckdb_version }}
       # VCPKG config
       VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
       VCPKG_TARGET_TRIPLET: ${{ matrix.vcpkg_target_triplet }}
@@ -969,7 +971,7 @@ jobs:
       matrix: ${{fromJson(needs.generate_matrix.outputs.windows_matrix)}}
     env:
       # Haybarn: see comment in the linux job for why this is set.
-      OVERRIDE_GIT_DESCRIBE: ${{ startsWith(inputs.duckdb_version, 'haybarn-v1.5.2') && 'v1.5.2' || inputs.duckdb_version }}
+      OVERRIDE_GIT_DESCRIBE: ${{ startsWith(inputs.duckdb_version, 'haybarn-v1.5.3') && 'v1.5.3' || inputs.duckdb_version }}
       # VCPKG config
       VCPKG_TARGET_TRIPLET: ${{ matrix.vcpkg_target_triplet }}
       VCPKG_HOST_TRIPLET: ${{ matrix.vcpkg_host_triplet }}
@@ -1302,7 +1304,7 @@ jobs:
       matrix: ${{fromJson(needs.generate_matrix.outputs.wasm_matrix)}}
     env:
       # Haybarn: see comment in the linux job for why this is set.
-      OVERRIDE_GIT_DESCRIBE: ${{ startsWith(inputs.duckdb_version, 'haybarn-v1.5.2') && 'v1.5.2' || inputs.duckdb_version }}
+      OVERRIDE_GIT_DESCRIBE: ${{ startsWith(inputs.duckdb_version, 'haybarn-v1.5.3') && 'v1.5.3' || inputs.duckdb_version }}
       VCPKG_TARGET_TRIPLET: ${{ matrix.vcpkg_target_triplet }}
       VCPKG_HOST_TRIPLET: ${{ matrix.vcpkg_host_triplet }}
       VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
@@ -1527,7 +1529,7 @@ jobs:
           DUCKDB_GIT_VERSION=${{ inputs.duckdb_version }}
           # Haybarn: forward the normalized version label into the container so
           # CMake embeds the right engine library_version in the extension binary.
-          OVERRIDE_GIT_DESCRIBE=${{ startsWith(inputs.duckdb_version, 'haybarn-v1.5.2') && 'v1.5.2' || inputs.duckdb_version }}
+          OVERRIDE_GIT_DESCRIBE=${{ startsWith(inputs.duckdb_version, 'haybarn-v1.5.3') && 'v1.5.3' || inputs.duckdb_version }}
           EXTENSION_NAME=${{ inputs.extension_name }}
           EXTENSION_CANONICAL=${{ inputs.extension_canonical }}
           ENABLE_EXTENSION_AUTOINSTALL=1

@@ -1,0 +1,98 @@
+name: Upload artifact (with retry)
+description: |
+  Wrapper around actions/upload-artifact that retries on transient failures.
+
+  The GitHub artifact backend occasionally drops the initial CreateArtifact
+  call -- the step validates inputs, then dies in a fraction of a second with
+  no bytes uploaded and no error text. The data-plane upload has its own
+  internal retries, but that control-plane registration does not, so an
+  otherwise-green build (compile + tests passed) fails purely on the upload.
+  This is rare per-job but, across the many extensions that share this CI
+  workflow, common enough in aggregate to be worth hardening.
+
+  A uses: action can't be wrapped in a shell retry loop, so this composite
+  retries by running actions/upload-artifact up to `max_attempts` times, each
+  guarded by the previous attempt's outcome. Retry attempts force overwrite so
+  a partially-registered artifact from a failed attempt can't wedge the retry
+  with a name-collision. The final attempt is not continue-on-error, so a
+  genuinely broken upload still fails the job loudly.
+
+inputs:
+  name:
+    description: Artifact name.
+    required: true
+  path:
+    description: File/dir path(s) to upload (newline-separated, as upload-artifact expects).
+    required: true
+  if-no-files-found:
+    description: Behaviour when no files match (warn | error | ignore).
+    required: false
+    default: error
+  retention-days:
+    description: Artifact retention in days (empty = repo default).
+    required: false
+    default: ""
+  overwrite:
+    description: Overwrite an existing artifact of the same name on the first attempt.
+    required: false
+    default: "false"
+  max_attempts:
+    description: Total upload attempts before giving up.
+    required: false
+    default: "3"
+  retry_delay_seconds:
+    description: Base seconds to wait between attempts (doubled each retry).
+    required: false
+    default: "15"
+
+runs:
+  using: composite
+  steps:
+    - name: Upload artifact (attempt 1)
+      id: attempt1
+      continue-on-error: true
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        if-no-files-found: ${{ inputs.if-no-files-found }}
+        retention-days: ${{ inputs.retention-days }}
+        overwrite: ${{ inputs.overwrite }}
+
+    - name: Wait before upload retry 2
+      if: ${{ steps.attempt1.outcome == 'failure' && fromJSON(inputs.max_attempts) >= 2 }}
+      shell: bash
+      run: |
+        echo "Artifact upload attempt 1 failed; retrying in ${{ inputs.retry_delay_seconds }}s..." >&2
+        sleep "${{ inputs.retry_delay_seconds }}"
+
+    - name: Upload artifact (attempt 2)
+      id: attempt2
+      if: ${{ steps.attempt1.outcome == 'failure' && fromJSON(inputs.max_attempts) >= 2 }}
+      continue-on-error: true
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        if-no-files-found: ${{ inputs.if-no-files-found }}
+        retention-days: ${{ inputs.retention-days }}
+        # Force overwrite on retry in case a failed attempt left a stub.
+        overwrite: true
+
+    - name: Wait before upload retry 3
+      if: ${{ steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'failure' && fromJSON(inputs.max_attempts) >= 3 }}
+      shell: bash
+      run: |
+        echo "Artifact upload attempt 2 failed; retrying in $(( ${{ inputs.retry_delay_seconds }} * 2 ))s..." >&2
+        sleep "$(( ${{ inputs.retry_delay_seconds }} * 2 ))"
+
+    # Final attempt: no continue-on-error, so a real failure fails the job.
+    - name: Upload artifact (attempt 3, final)
+      if: ${{ steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'failure' && fromJSON(inputs.max_attempts) >= 3 }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        if-no-files-found: ${{ inputs.if-no-files-found }}
+        retention-days: ${{ inputs.retention-days }}
+        overwrite: true

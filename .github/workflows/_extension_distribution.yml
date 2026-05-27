@@ -644,7 +644,7 @@ jobs:
           eval "$(jq -r '.test_env_variables // {} | to_entries[] | "export \(.key)=\(.value | @sh)"' <<< '${{inputs.test_config}}')"
           make test_${{ inputs.build_type }}
 
-      - uses: actions/upload-artifact@v7
+      - uses: ./extension-ci-tools/.github/actions/upload-artifact-retry
         if: ${{ !inputs.upload_all_extensions }}
         with:
           if-no-files-found: error
@@ -652,7 +652,7 @@ jobs:
           path: |
             build/${{ inputs.build_type }}/extension/${{ inputs.extension_name }}/${{ inputs.extension_name }}.duckdb_extension
 
-      - uses: actions/upload-artifact@v7
+      - uses: ./extension-ci-tools/.github/actions/upload-artifact-retry
         if: ${{ inputs.upload_all_extensions }}
         with:
           if-no-files-found: error
@@ -938,7 +938,7 @@ jobs:
           eval "$(jq -r '.test_env_variables // {} | to_entries[] | "export \(.key)=\(.value | @sh)"' <<< '${{inputs.test_config}}')"
           make test_${{ inputs.build_type }}
 
-      - uses: actions/upload-artifact@v7
+      - uses: ./extension-ci-tools/.github/actions/upload-artifact-retry
         if: ${{ !inputs.upload_all_extensions }}
         with:
           if-no-files-found: error
@@ -946,7 +946,7 @@ jobs:
           path: |
             build/${{ inputs.build_type }}/extension/${{ inputs.extension_name }}/${{ inputs.extension_name }}.duckdb_extension
 
-      - uses: actions/upload-artifact@v7
+      - uses: ./extension-ci-tools/.github/actions/upload-artifact-retry
         if: ${{ inputs.upload_all_extensions }}
         with:
           if-no-files-found: error
@@ -1264,7 +1264,7 @@ jobs:
           eval "$(jq -r '.test_env_variables // {} | to_entries[] | "export \(.key)=\(.value | @sh)"' <<< '${{inputs.test_config}}')"
           make test_${{ inputs.build_type }}
 
-      - uses: actions/upload-artifact@v7
+      - uses: ./extension-ci-tools/.github/actions/upload-artifact-retry
         if: ${{ !inputs.upload_all_extensions }}
         with:
           if-no-files-found: error
@@ -1272,7 +1272,7 @@ jobs:
           path: |
             build/${{ inputs.build_type }}/extension/${{ inputs.extension_name }}/${{ inputs.extension_name }}.duckdb_extension
 
-      - uses: actions/upload-artifact@v7
+      - uses: ./extension-ci-tools/.github/actions/upload-artifact-retry
         if: ${{ inputs.upload_all_extensions }}
         with:
           if-no-files-found: error
@@ -1710,7 +1710,7 @@ jobs:
             "${{ steps.wasm_image.outputs.ref }}" \
             ccache -s -v || true
 
-      - uses: actions/upload-artifact@v7
+      - uses: ./extension-ci-tools/.github/actions/upload-artifact-retry
         if: ${{ !inputs.upload_all_extensions }}
         with:
           if-no-files-found: error
@@ -1718,7 +1718,7 @@ jobs:
           path: |
             build/${{ matrix.duckdb_arch }}/extension/${{ inputs.extension_name }}/${{ inputs.extension_name }}.duckdb_extension.wasm
 
-      - uses: actions/upload-artifact@v7
+      - uses: ./extension-ci-tools/.github/actions/upload-artifact-retry
         if: ${{ inputs.upload_all_extensions}}
         with:
           if-no-files-found: error

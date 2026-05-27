@@ -148,6 +148,16 @@ on:
         required: false
         type: boolean
         default: false
+      # Haybarn: per-step wall-clock cap (minutes) on the "Test extension"
+      # steps. A hung test would otherwise run until GitHub's hard 6-hour job
+      # limit (see run 26489249456 where the Windows leg burned 6h0m). This
+      # kills the test step early so the job fails fast and the runner is
+      # released. Generous default — successful test legs finish in minutes —
+      # but bump it per-caller for extensions with genuinely long suites.
+      test_timeout_minutes:
+        required: false
+        type: number
+        default: 30
       save_cache:
         required: false
         type: boolean
@@ -631,11 +641,13 @@ jobs:
       # restore step above — R2 carries all ccache.
       - name: Test extension (inside docker)
         if: ${{ matrix.duckdb_arch != 'linux_arm64' && inputs.skip_tests == false }}
+        timeout-minutes: ${{ inputs.test_timeout_minutes }}
         run: |
           docker run --env-file=docker_env.txt -v `pwd`:/duckdb_build_dir -v `pwd`/ccache_dir:/ccache_dir duckdb/${{ matrix.duckdb_arch }} make test_${{ inputs.build_type }}
 
       - name: Test extension (outside docker)
         if: ${{ matrix.duckdb_arch != 'linux_arm64' && inputs.skip_tests == false }}
+        timeout-minutes: ${{ inputs.test_timeout_minutes }}
         env:
           DUCKDB_GIT_VERSION: ${{ inputs.duckdb_version }}
           LINUX_CI_IN_DOCKER: 0
@@ -931,6 +943,7 @@ jobs:
 
       - name: Test Extension
         if: ${{ matrix.osx_build_arch == 'arm64' && inputs.skip_tests == false }}
+        timeout-minutes: ${{ inputs.test_timeout_minutes }}
         env:
           SUBSET_EXTENSIONS_TESTS: ${{ inputs.extensions_test_selection }}
         shell: bash
@@ -1255,6 +1268,7 @@ jobs:
 
       - name: Test extension
         if: ${{ inputs.skip_tests == false }}
+        timeout-minutes: ${{ inputs.test_timeout_minutes }}
         shell: bash
         env:
           DUCKDB_PLATFORM: ${{ matrix.duckdb_arch }}

@@ -471,13 +471,20 @@ jobs:
       # on the same-org packages by default; if a fork republishes images
       # under a different namespace, that fork's GITHUB_TOKEN won't have
       # cross-org packages:read and the pull will still fail loudly with 401.
+      # Inline `docker login` (rather than docker/login-action) so the call can
+      # be wrapped in with-retry.sh: the GHCR token endpoint intermittently
+      # times out, and a uses: action can't be retried in shell. Token is fed on
+      # stdin so it never lands in argv or the logs.
       - name: Log in to GHCR (for pre-built image pull)
         if: ${{ inputs.use_prebuilt_images }}
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RETRY_NON_RETRYABLE: 'unauthorized|incorrect username or password|denied|access forbidden'
+        run: |
+          ./extension-ci-tools/scripts/with-retry.sh \
+            bash -c 'printf "%s" "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin'
 
       - name: Pull pre-built Docker image
         if: ${{ inputs.use_prebuilt_images }}
@@ -489,10 +496,10 @@ jobs:
           # Variant suffix is uniform (even `-base`) so the URL template
           # never has to special-case "no variant."
           IMAGE_REF: ghcr.io/${{ inputs.prebuilt_image_namespace }}/haybarn-${{ matrix.duckdb_arch }}-${{ inputs.image_variant }}:${{ inputs.prebuilt_image_tag }}
+          RETRY_NON_RETRYABLE: 'manifest unknown|manifest for .* not found|not found|denied|unauthorized|invalid reference format'
         run: |
-          echo "Pulling ${IMAGE_REF}"
-          docker pull "${IMAGE_REF}"
-          docker tag  "${IMAGE_REF}" "duckdb/${{ matrix.duckdb_arch }}"
+          ./extension-ci-tools/scripts/with-retry.sh docker pull "${IMAGE_REF}"
+          docker tag "${IMAGE_REF}" "duckdb/${{ matrix.duckdb_arch }}"
 
       - name: Build Docker image
         if: ${{ !inputs.use_prebuilt_images }}
@@ -1488,18 +1495,26 @@ jobs:
           echo "ref=${IMG}" >> "$GITHUB_OUTPUT"
           echo "Selected wasm image: ${IMG}"
 
+      # Inline retryable login (see native path) -- the GHCR token endpoint can
+      # time out, and a uses: action can't be wrapped in with-retry.sh.
       - name: Log in to GHCR (wasm path)
         if: ${{ inputs.use_prebuilt_wasm_image }}
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RETRY_NON_RETRYABLE: 'unauthorized|incorrect username or password|denied|access forbidden'
+        run: |
+          ./extension-ci-tools/scripts/with-retry.sh \
+            bash -c 'printf "%s" "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin'
 
       - name: Pull wasm image
         if: ${{ inputs.use_prebuilt_wasm_image }}
         shell: bash
-        run: docker pull "${{ steps.wasm_image.outputs.ref }}"
+        env:
+          IMAGE_REF: ${{ steps.wasm_image.outputs.ref }}
+          RETRY_NON_RETRYABLE: 'manifest unknown|manifest for .* not found|not found|denied|unauthorized|invalid reference format'
+        run: ./extension-ci-tools/scripts/with-retry.sh docker pull "${IMAGE_REF}"
 
       - name: Prepare ccache_dir + docker env file (wasm Docker path)
         if: ${{ inputs.use_prebuilt_wasm_image }}

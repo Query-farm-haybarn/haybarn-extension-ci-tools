@@ -29,8 +29,11 @@ Inputs:
   --ext-commit-ts     per-extension commit ts for CalVer (default: engine ts)
   --ext-version-label descriptor semver; wins over CalVer when set
   --version           explicit version override (skips CalVer/semver derivation)
-  --haybarn-version   e.g. 1.5.3  (drives package-name suffix + peer pin)
-  --duckdb-version    e.g. v1.5.3 (path segment)
+  --haybarn-version   engine version or tag (1.5.3 / v1.5.3 / haybarn-v1.5.3-rc3);
+                      normalized to bare semver for the npm suffix + peer pin
+  --duckdb-version    vestigial — the R2 path segment is derived from the
+                      assembled <repo-dir>/<version>/ directory name (also
+                      normalized to vX.Y.Z), not from this arg
   --r2-bucket         R2 bucket name
   --r2-prefix         e.g. core / community
   --license           path to LICENSE file (embedded in wheels)
@@ -73,6 +76,7 @@ import io
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -240,6 +244,30 @@ def compute_calver(ts: int) -> str:
     return f"{when.year*100+when.month}.{when.day}.{when.hour*10000+when.minute*100+when.second}"
 
 
+# Engine version arrives in several shapes depending on the caller: core (the
+# engine repo) passes a clean "v1.5.3" / "1.5.3"; the community pipeline passes
+# the engine *git tag* "haybarn-v1.5.3-rc3" — the same value it checks the
+# engine source out at — because one input does double duty. Both MUST collapse
+# to the bare "X.Y.Z" that the R2 path segment and the npm/peer version use, so
+# an engine tag (with its `haybarn-` prefix or `-rcN` pre-release suffix) can
+# never leak into a published path or package name. This is the single place
+# that knows the mapping; it fails closed on anything without a clean semver
+# core rather than silently writing a malformed key (the old per-arch deploy did
+# the strip in shell with `${DV#v}`, which no-ops on a "haybarn-…" string and is
+# how rc tags ended up as R2 path segments).
+_ENGINE_VERSION_RE = re.compile(r"^(?:haybarn-)?v?(\d+\.\d+\.\d+)(?:-rc\d+)?$")
+
+
+def normalize_engine_version(raw: str) -> str:
+    """'haybarn-v1.5.3-rc3' | 'v1.5.3' | '1.5.3' -> '1.5.3' (bare semver)."""
+    m = _ENGINE_VERSION_RE.match(raw.strip())
+    if not m:
+        raise SystemExit(
+            f"::error::unrecognized engine version {raw!r} — expected clean semver "
+            f"like 'v1.5.3' or an engine tag like 'haybarn-v1.5.3-rc3'")
+    return m.group(1)
+
+
 def haybarn_suffix(hv: str) -> str:
     a, b, c = hv.split(".")
     return f"h{a}-{b}-{c}"
@@ -321,6 +349,13 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--deploy",            default="false")
     args = ap.parse_args(argv)
 
+    # Collapse the engine version to bare semver up front so an engine git tag
+    # (haybarn-v1.5.3-rc3) can never reach an npm package name / peer pin. The
+    # path segment is normalized separately at tree enumeration (it comes from
+    # the assembled directory name, not this arg). --duckdb-version is now
+    # vestigial (the path segment is the dir name); kept for arg compatibility.
+    args.haybarn_version = normalize_engine_version(args.haybarn_version)
+
     dry_run = args.deploy.lower() != "true"
 
     # ext_commit defaults to engine_commit (core conflates them); ext_commit_ts
@@ -395,7 +430,12 @@ def main(argv: list[str]) -> int:
     for version_dir in sorted(args.repo_dir.iterdir()):
         if not version_dir.is_dir():
             continue
-        dv = version_dir.name
+        # The directory name is the version the caller assembled the tree under
+        # — clean "v1.5.3" for core, the engine tag "haybarn-v1.5.3-rc3" for
+        # community. Normalize to the canonical "vX.Y.Z" path segment the engine
+        # INSTALLs from; binaries are still read from version_dir itself (ext_file
+        # is a resolved path), so only the published key changes.
+        dv = "v" + normalize_engine_version(version_dir.name)
         for arch_dir in sorted(version_dir.iterdir()):
             if not arch_dir.is_dir():
                 continue

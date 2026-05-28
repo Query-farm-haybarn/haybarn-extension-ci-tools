@@ -346,7 +346,12 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          HV="${DV#v}"
+          # Engine version normalization MUST match publish_extensions.py
+          # (which produced the leaf tarball names). The previous '${DV#v}'
+          # no-ops on 'haybarn-…' inputs and produced 'hhaybarn-v1-5-3-rc3'
+          # meta names whose META_PREFIX didn't match any leaf, leaving full
+          # @haybarn/… leaf names in optionalDependencies (invalid npm name).
+          HV=$(python3 ci-tools/scripts/publish/normalize_engine_version.py "$DV")
           HSUFFIX="h${HV//./-}"
           META_PKG="@haybarn/ext-${EXTENSION}-${HSUFFIX}"
           META_PREFIX="${META_PKG}-"
@@ -430,7 +435,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          HV="${DV#v}"
+          HV=$(python3 ci-tools/scripts/publish/normalize_engine_version.py "$DV")
           export STAGE="stage/npm-meta"
           export PKG="$META_PKG"
           export HAYBARN_VERSION="$HV"

@@ -76,7 +76,6 @@ import io
 import json
 import os
 import pathlib
-import re
 import shutil
 import subprocess
 import sys
@@ -250,22 +249,12 @@ def compute_calver(ts: int) -> str:
 # engine source out at — because one input does double duty. Both MUST collapse
 # to the bare "X.Y.Z" that the R2 path segment and the npm/peer version use, so
 # an engine tag (with its `haybarn-` prefix or `-rcN` pre-release suffix) can
-# never leak into a published path or package name. This is the single place
-# that knows the mapping; it fails closed on anything without a clean semver
-# core rather than silently writing a malformed key (the old per-arch deploy did
-# the strip in shell with `${DV#v}`, which no-ops on a "haybarn-…" string and is
-# how rc tags ended up as R2 path segments).
-_ENGINE_VERSION_RE = re.compile(r"^(?:haybarn-)?v?(\d+\.\d+\.\d+)(?:-rc\d+)?$")
-
-
-def normalize_engine_version(raw: str) -> str:
-    """'haybarn-v1.5.3-rc3' | 'v1.5.3' | '1.5.3' -> '1.5.3' (bare semver)."""
-    m = _ENGINE_VERSION_RE.match(raw.strip())
-    if not m:
-        raise SystemExit(
-            f"::error::unrecognized engine version {raw!r} — expected clean semver "
-            f"like 'v1.5.3' or an engine tag like 'haybarn-v1.5.3-rc3'")
-    return m.group(1)
+# never leak into a published path or package name. The implementation lives in
+# normalize_engine_version.py so the per-arch registry-publish workflow can
+# call it directly from a shell step (avoiding the `${DV#v}` trap that no-ops
+# on "haybarn-…" strings and produced malformed npm meta names in the May 2026
+# sweep — see https://… or git blame).
+from normalize_engine_version import normalize_engine_version  # noqa: E402
 
 
 def haybarn_suffix(hv: str) -> str:

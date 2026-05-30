@@ -214,7 +214,7 @@ VCPKG_EMSDK_FLAGS=-DVCPKG_CHAINLOAD_TOOLCHAIN_FILE=$(EMSDK)/upstream/emscripten/
 WASM_COMPILE_TIME_COMMON_FLAGS=-DWASM_LOADABLE_EXTENSIONS=1 -DBUILD_EXTENSIONS_ONLY=1 $(TOOLCHAIN_FLAGS) $(VCPKG_EMSDK_FLAGS)
 WASM_CXX_MVP_FLAGS=
 WASM_CXX_EH_FLAGS=$(WASM_CXX_MVP_FLAGS) -fwasm-exceptions -DWEBDB_FAST_EXCEPTIONS=1
-WASM_CXX_THREADS_FLAGS=$(WASM_COMPILE_TIME_EH_FLAGS) -DWITH_WASM_THREADS=1 -DWITH_WASM_SIMD=1 -DWITH_WASM_BULK_MEMORY=1 -pthread
+WASM_CXX_THREADS_FLAGS=$(WASM_CXX_EH_FLAGS) -DWITH_WASM_THREADS=1 -DWITH_WASM_SIMD=1 -DWITH_WASM_BULK_MEMORY=1 -pthread
 
 wasm_pre_build_step:
 
@@ -227,6 +227,13 @@ wasm_mvp: wasm_pre_build_step ${EXTENSION_CONFIG_STEP_WASM}
 wasm_eh: wasm_pre_build_step ${EXTENSION_CONFIG_STEP_WASM}
 	mkdir -p build/wasm_eh
 	emcmake cmake $(GENERATOR) $(EXTENSION_CONFIG_FLAG) $(VCPKG_MANIFEST_FLAGS) $(WASM_COMPILE_TIME_COMMON_FLAGS) $(BUILD_FLAGS) -Bbuild/wasm_eh -DCMAKE_CXX_FLAGS="$(WASM_CXX_EH_FLAGS)" -S $(DUCKDB_SRCDIR) -DDUCKDB_EXPLICIT_PLATFORM=wasm_eh -DDUCKDB_CUSTOM_PLATFORM=wasm_eh
+	# Compat shim: some extensions (e.g. duckdb-spatial, duckdb-avro) hardcode the
+	# "wasm32-emscripten" vcpkg triplet name in their wasm link paths instead of
+	# using VCPKG_TARGET_TRIPLET. Our native-EH eh deps install under
+	# "wasm32-emscripten-eh", so alias the stock name to them after the
+	# configure/install above and before the link below. In an eh build all deps
+	# are native-EH, so the alias is semantically correct.
+	test -d build/wasm_eh/vcpkg_installed/wasm32-emscripten-eh && ln -sfn wasm32-emscripten-eh build/wasm_eh/vcpkg_installed/wasm32-emscripten || true
 	emmake make -j8 -Cbuild/wasm_eh
 
 wasm_threads: wasm_pre_build_step ${EXTENSION_CONFIG_STEP_WASM}

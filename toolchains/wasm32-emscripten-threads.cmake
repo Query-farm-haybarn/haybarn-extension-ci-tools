@@ -35,8 +35,8 @@ set(VCPKG_ENV_PASSTHROUGH_UNTRACKED EMSDK PATH)
 # Cache-bust marker. vcpkg's package ABI hashes this triplet file but not
 # necessarily the chainloaded toolchain file's contents — so bump this whenever
 # wasm32-emscripten-threads-toolchain.cmake changes, to force a dependency
-# rebuild instead of restoring stale (e.g. non-atomics) artifacts.
-# pthread-toolchain-abi: 1
+# rebuild instead of restoring stale (e.g. non-atomics or legacy-EH) artifacts.
+# pthread-toolchain-abi: 2
 
 # Release-only: the wasm extensions link the Release dependency libs (lib/*.a);
 # the Debug libs (debug/lib/*.a) vcpkg builds by default are never used here.

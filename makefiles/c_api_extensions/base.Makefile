@@ -115,15 +115,33 @@ TEST_RUNNER_RELEASE=$(TEST_RUNNER_BASE) --external-extension build/release/$(EXT
 # accepts them. All currently-published releases are pre-release (1.5.Xrcn),
 # so --pre is required for pip to consider them. Default is latest; pin via
 # DUCKDB_TEST_VERSION (e.g. '1.5.3rc4') when reproducibility matters.
+#
+# Exception: haybarn-cli does not (yet) publish a win_arm64 wheel — the 1.5.3rc4
+# release only ships {macos arm64/x86_64, manylinux x86_64/aarch64, musllinux
+# x86_64/aarch64, win_amd64}. Fall back to upstream `duckdb` on that arch so
+# tests still run; the OVERRIDE_GIT_DESCRIBE=v1.5.3 label means the engine
+# loader's library_version check still passes against upstream 1.5.3. Remove
+# this branch once haybarn-cli ships a win_arm64 wheel.
+ifeq ($(DUCKDB_PLATFORM),windows_arm64)
+DUCKDB_PIP_INSTALL?=duckdb
+ifeq ($(DUCKDB_TEST_VERSION),main)
+	DUCKDB_PIP_INSTALL=--pre duckdb
+else ifneq ($(DUCKDB_TEST_VERSION),)
+	DUCKDB_PIP_INSTALL=duckdb==$(DUCKDB_TEST_VERSION)
+endif
+ifeq ($(DUCKDB_GIT_VERSION),main)
+	DUCKDB_PIP_INSTALL=--pre duckdb
+endif
+else
 DUCKDB_PIP_INSTALL?=--pre haybarn-cli
 ifeq ($(DUCKDB_TEST_VERSION),main)
 	DUCKDB_PIP_INSTALL=--pre haybarn-cli
 else ifneq ($(DUCKDB_TEST_VERSION),)
 	DUCKDB_PIP_INSTALL=haybarn-cli==$(DUCKDB_TEST_VERSION)
 endif
-
 ifeq ($(DUCKDB_GIT_VERSION),main)
 	DUCKDB_PIP_INSTALL=--pre haybarn-cli
+endif
 endif
 
 TEST_RELEASE_TARGET=test_extension_release_internal

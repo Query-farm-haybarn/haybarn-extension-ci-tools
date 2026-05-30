@@ -108,18 +108,22 @@ TEST_RUNNER_BASE=$(TEST_RUNNER) --test-dir test/sql $(EXTRA_EXTENSIONS_PARAM)
 TEST_RUNNER_DEBUG=$(TEST_RUNNER_BASE) --external-extension build/debug/$(EXTENSION_NAME).duckdb_extension
 TEST_RUNNER_RELEASE=$(TEST_RUNNER_BASE) --external-extension build/release/$(EXTENSION_NAME).duckdb_extension
 
-# By default latest duckdb is installed, set DUCKDB_TEST_VERSION to switch to a different version
-DUCKDB_PIP_INSTALL?=duckdb
+# Haybarn: test against the Haybarn engine fork (haybarn-cli on PyPI), not
+# upstream duckdb. haybarn-cli is an ABI-compatible drop-in — it still ships
+# the `duckdb` Python module that duckdb_sqllogictest imports — but its
+# library_version matches the binaries this CI builds, so the engine loader
+# accepts them. All currently-published releases are pre-release (1.5.Xrcn),
+# so --pre is required for pip to consider them. Default is latest; pin via
+# DUCKDB_TEST_VERSION (e.g. '1.5.3rc4') when reproducibility matters.
+DUCKDB_PIP_INSTALL?=--pre haybarn-cli
 ifeq ($(DUCKDB_TEST_VERSION),main)
-	DUCKDB_PIP_INSTALL=--pre duckdb
+	DUCKDB_PIP_INSTALL=--pre haybarn-cli
 else ifneq ($(DUCKDB_TEST_VERSION),)
-	DUCKDB_PIP_INSTALL=duckdb==$(DUCKDB_TEST_VERSION)
+	DUCKDB_PIP_INSTALL=haybarn-cli==$(DUCKDB_TEST_VERSION)
 endif
 
-# This allows C API extensions to be tested against a prerelease of DuckDB. This only really makes sense when DuckDB already
-# has stabilized the C API for the upcoming release.
 ifeq ($(DUCKDB_GIT_VERSION),main)
-	DUCKDB_PIP_INSTALL=--pre duckdb
+	DUCKDB_PIP_INSTALL=--pre haybarn-cli
 endif
 
 TEST_RELEASE_TARGET=test_extension_release_internal

@@ -950,10 +950,26 @@ jobs:
         with:
           go-version: '1.23'
 
-      - name: Install parser tools
-        if: ${{ contains(format(';{0};', inputs.extra_toolchains), ';parser_tools;')}}
+      # Bison/flex are needed by any vcpkg port whose grammar uses
+      # Bison 3.x `%code` directives — most commonly thrift (transitive
+      # via arrow/parquet). Apple ships Bison 2.3 at /usr/bin/bison and
+      # vcpkg_find_acquire_program(BISON) on macOS just does PATH
+      # lookup, so without a newer bison ahead of /usr/bin/ the source
+      # build fails. brew's bison/flex are keg-only, so the prepends
+      # are required even after install. Unconditional on macOS — the
+      # surprise transitive dep model breaks too many extensions to
+      # leave behind an extra_toolchains opt-in.
+      - name: Install bison/flex (macOS)
         run: |
           brew install bison flex
+          if [ -d /opt/homebrew/opt/bison/bin ]; then
+            echo "/opt/homebrew/opt/bison/bin" >> $GITHUB_PATH
+            echo "/opt/homebrew/opt/flex/bin"  >> $GITHUB_PATH
+          fi
+          if [ -d /usr/local/opt/bison/bin ]; then
+            echo "/usr/local/opt/bison/bin" >> $GITHUB_PATH
+            echo "/usr/local/opt/flex/bin"  >> $GITHUB_PATH
+          fi
 
       - name: Inject extra extension config
         if: ${{ inputs.extra_extension_config }}

@@ -235,7 +235,11 @@ link_wasm_debug:
 	emcc $(EXTENSION_BUILD_PATH)/debug/$(EXTENSION_LIB_FILENAME) -o $(EXTENSION_BUILD_PATH)/debug/$(EXTENSION_FILENAME_NO_METADATA) -O3 -g -sSIDE_MODULE=2 -sEXPORTED_FUNCTIONS="_$(EXTENSION_NAME)_init_c_api" $(WASM_LINK_THREAD_FLAGS)
 
 link_wasm_release:
-	emcc $(EXTENSION_BUILD_PATH)/release/$(EXTENSION_LIB_FILENAME) -o $(EXTENSION_BUILD_PATH)/release/$(EXTENSION_FILENAME_NO_METADATA) -O3 -sSIDE_MODULE=2 -sEXPORTED_FUNCTIONS="_$(EXTENSION_NAME)_init_c_api" $(WASM_LINK_THREAD_FLAGS)
+	# -g2 keeps the wasm "name" section so trap/exception stack traces show
+	# (mangled) function names instead of wasm-function[N]. Metadata only,
+	# independent of -O3; demangle with llvm-cxxfilt / rustfilt. Matches the
+	# engine-side flag in haybarn-wasm lib/CMakeLists.txt.
+	emcc $(EXTENSION_BUILD_PATH)/release/$(EXTENSION_LIB_FILENAME) -o $(EXTENSION_BUILD_PATH)/release/$(EXTENSION_FILENAME_NO_METADATA) -O3 -g2 -sSIDE_MODULE=2 -sEXPORTED_FUNCTIONS="_$(EXTENSION_NAME)_init_c_api" $(WASM_LINK_THREAD_FLAGS)
 
 else
 link_wasm_debug:

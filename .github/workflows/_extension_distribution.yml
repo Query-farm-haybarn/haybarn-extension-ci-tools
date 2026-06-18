@@ -497,6 +497,42 @@ jobs:
             echo "No duckdb/ directory present; skipping (extension does not vendor the engine, e.g. C API templates)."
           fi
 
+      - name: Mirror engine + ci-tools into nested submodule paths
+        if: ${{ inputs.override_repository != '' }}
+        shell: bash
+        run: |
+          # Most extensions vendor `duckdb` and `extension-ci-tools` at the repo
+          # root (the canonical extension-template layout). Some declare them
+          # under a subdirectory instead — e.g. CogitatorTech's gaggle/infera/
+          # onager use `external/duckdb` + `external/extension-ci-tools` and
+          # `include external/extension-ci-tools/...` in their Makefile. The init
+          # step above deliberately skips those engine submodules, and we supply
+          # the Haybarn engine + ci-tools at top-level ./duckdb and
+          # ./extension-ci-tools (which the rest of this workflow's tooling
+          # hard-depends on). Mirror them to the path the extension's .gitmodules
+          # actually declares so its Makefile include + DUCKDB_SRCDIR resolve.
+          # No-op for the canonical root layout.
+          set -euo pipefail
+          [ -f .gitmodules ] || { echo "no .gitmodules — nothing to mirror"; exit 0; }
+          mirror() {
+            local name="$1" declared
+            declared=$(git config --file .gitmodules --get-regexp '^submodule\..*\.path$' \
+              | awk '{print $2}' | grep -xE "(.*/)?${name}" | grep -vxE "${name}" | head -n1 || true)
+            [ -n "$declared" ] || return 0          # not declared, or declared at root
+            [ ! -e "$declared" ] || return 0        # already populated
+            [ -d "$name" ] || { echo "skip ${name}: no top-level ./${name}"; return 0; }
+            mkdir -p "$(dirname "$declared")"
+            if [ "${RUNNER_OS:-}" = "Windows" ]; then
+              # junction: works without admin / Developer Mode, unlike symlinks
+              cmd //c mklink //J "$(cygpath -w "$declared")" "$(cygpath -w "$PWD/$name")"
+            else
+              ln -s "$(cd "$name" && pwd)" "$declared"
+            fi
+            echo "mirrored ${declared} -> ./${name}"
+          }
+          mirror duckdb
+          mirror extension-ci-tools
+
       - name: Tag extension
         if: ${{inputs.extension_tag != ''}}
         run: |
@@ -909,6 +945,42 @@ jobs:
           else
             echo "No duckdb/ directory present; skipping (extension does not vendor the engine, e.g. C API templates)."
           fi
+
+      - name: Mirror engine + ci-tools into nested submodule paths
+        if: ${{ inputs.override_repository != '' }}
+        shell: bash
+        run: |
+          # Most extensions vendor `duckdb` and `extension-ci-tools` at the repo
+          # root (the canonical extension-template layout). Some declare them
+          # under a subdirectory instead — e.g. CogitatorTech's gaggle/infera/
+          # onager use `external/duckdb` + `external/extension-ci-tools` and
+          # `include external/extension-ci-tools/...` in their Makefile. The init
+          # step above deliberately skips those engine submodules, and we supply
+          # the Haybarn engine + ci-tools at top-level ./duckdb and
+          # ./extension-ci-tools (which the rest of this workflow's tooling
+          # hard-depends on). Mirror them to the path the extension's .gitmodules
+          # actually declares so its Makefile include + DUCKDB_SRCDIR resolve.
+          # No-op for the canonical root layout.
+          set -euo pipefail
+          [ -f .gitmodules ] || { echo "no .gitmodules — nothing to mirror"; exit 0; }
+          mirror() {
+            local name="$1" declared
+            declared=$(git config --file .gitmodules --get-regexp '^submodule\..*\.path$' \
+              | awk '{print $2}' | grep -xE "(.*/)?${name}" | grep -vxE "${name}" | head -n1 || true)
+            [ -n "$declared" ] || return 0          # not declared, or declared at root
+            [ ! -e "$declared" ] || return 0        # already populated
+            [ -d "$name" ] || { echo "skip ${name}: no top-level ./${name}"; return 0; }
+            mkdir -p "$(dirname "$declared")"
+            if [ "${RUNNER_OS:-}" = "Windows" ]; then
+              # junction: works without admin / Developer Mode, unlike symlinks
+              cmd //c mklink //J "$(cygpath -w "$declared")" "$(cygpath -w "$PWD/$name")"
+            else
+              ln -s "$(cd "$name" && pwd)" "$declared"
+            fi
+            echo "mirrored ${declared} -> ./${name}"
+          }
+          mirror duckdb
+          mirror extension-ci-tools
 
       - name: Tag extension
         if: ${{inputs.extension_tag != ''}}
@@ -1327,6 +1399,42 @@ jobs:
             echo "No duckdb/ directory present; skipping (extension does not vendor the engine, e.g. C API templates)."
           fi
 
+      - name: Mirror engine + ci-tools into nested submodule paths
+        if: ${{ inputs.override_repository != '' }}
+        shell: bash
+        run: |
+          # Most extensions vendor `duckdb` and `extension-ci-tools` at the repo
+          # root (the canonical extension-template layout). Some declare them
+          # under a subdirectory instead — e.g. CogitatorTech's gaggle/infera/
+          # onager use `external/duckdb` + `external/extension-ci-tools` and
+          # `include external/extension-ci-tools/...` in their Makefile. The init
+          # step above deliberately skips those engine submodules, and we supply
+          # the Haybarn engine + ci-tools at top-level ./duckdb and
+          # ./extension-ci-tools (which the rest of this workflow's tooling
+          # hard-depends on). Mirror them to the path the extension's .gitmodules
+          # actually declares so its Makefile include + DUCKDB_SRCDIR resolve.
+          # No-op for the canonical root layout.
+          set -euo pipefail
+          [ -f .gitmodules ] || { echo "no .gitmodules — nothing to mirror"; exit 0; }
+          mirror() {
+            local name="$1" declared
+            declared=$(git config --file .gitmodules --get-regexp '^submodule\..*\.path$' \
+              | awk '{print $2}' | grep -xE "(.*/)?${name}" | grep -vxE "${name}" | head -n1 || true)
+            [ -n "$declared" ] || return 0          # not declared, or declared at root
+            [ ! -e "$declared" ] || return 0        # already populated
+            [ -d "$name" ] || { echo "skip ${name}: no top-level ./${name}"; return 0; }
+            mkdir -p "$(dirname "$declared")"
+            if [ "${RUNNER_OS:-}" = "Windows" ]; then
+              # junction: works without admin / Developer Mode, unlike symlinks
+              cmd //c mklink //J "$(cygpath -w "$declared")" "$(cygpath -w "$PWD/$name")"
+            else
+              ln -s "$(cd "$name" && pwd)" "$declared"
+            fi
+            echo "mirrored ${declared} -> ./${name}"
+          }
+          mirror duckdb
+          mirror extension-ci-tools
+
       - name: Tag extension
         if: ${{inputs.extension_tag != ''}}
         run: |
@@ -1597,6 +1705,42 @@ jobs:
           else
             echo "No duckdb/ directory present; skipping (extension does not vendor the engine, e.g. C API templates)."
           fi
+
+      - name: Mirror engine + ci-tools into nested submodule paths
+        if: ${{ inputs.override_repository != '' }}
+        shell: bash
+        run: |
+          # Most extensions vendor `duckdb` and `extension-ci-tools` at the repo
+          # root (the canonical extension-template layout). Some declare them
+          # under a subdirectory instead — e.g. CogitatorTech's gaggle/infera/
+          # onager use `external/duckdb` + `external/extension-ci-tools` and
+          # `include external/extension-ci-tools/...` in their Makefile. The init
+          # step above deliberately skips those engine submodules, and we supply
+          # the Haybarn engine + ci-tools at top-level ./duckdb and
+          # ./extension-ci-tools (which the rest of this workflow's tooling
+          # hard-depends on). Mirror them to the path the extension's .gitmodules
+          # actually declares so its Makefile include + DUCKDB_SRCDIR resolve.
+          # No-op for the canonical root layout.
+          set -euo pipefail
+          [ -f .gitmodules ] || { echo "no .gitmodules — nothing to mirror"; exit 0; }
+          mirror() {
+            local name="$1" declared
+            declared=$(git config --file .gitmodules --get-regexp '^submodule\..*\.path$' \
+              | awk '{print $2}' | grep -xE "(.*/)?${name}" | grep -vxE "${name}" | head -n1 || true)
+            [ -n "$declared" ] || return 0          # not declared, or declared at root
+            [ ! -e "$declared" ] || return 0        # already populated
+            [ -d "$name" ] || { echo "skip ${name}: no top-level ./${name}"; return 0; }
+            mkdir -p "$(dirname "$declared")"
+            if [ "${RUNNER_OS:-}" = "Windows" ]; then
+              # junction: works without admin / Developer Mode, unlike symlinks
+              cmd //c mklink //J "$(cygpath -w "$declared")" "$(cygpath -w "$PWD/$name")"
+            else
+              ln -s "$(cd "$name" && pwd)" "$declared"
+            fi
+            echo "mirrored ${declared} -> ./${name}"
+          }
+          mirror duckdb
+          mirror extension-ci-tools
 
       - name: Tag extension
         if: ${{inputs.extension_tag != ''}}

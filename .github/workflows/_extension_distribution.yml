@@ -515,20 +515,32 @@ jobs:
           set -euo pipefail
           [ -f .gitmodules ] || { echo "no .gitmodules — nothing to mirror"; exit 0; }
           mirror() {
-            local name="$1" declared
+            local name="$1" declared updir ups
             declared=$(git config --file .gitmodules --get-regexp '^submodule\..*\.path$' \
               | awk '{print $2}' | grep -xE "(.*/)?${name}" | grep -vxE "${name}" | head -n1 || true)
             [ -n "$declared" ] || return 0          # not declared, or declared at root
-            [ ! -e "$declared" ] || return 0        # already populated
             [ -d "$name" ] || { echo "skip ${name}: no top-level ./${name}"; return 0; }
+            # The declared path exists as an EMPTY placeholder dir after the
+            # submodules:false checkout — only leave it alone if it has real
+            # content (a genuinely populated submodule).
+            if [ -e "$declared" ] && [ -n "$(ls -A "$declared" 2>/dev/null)" ]; then
+              echo "${declared} already populated — leaving as-is"; return 0
+            fi
+            rm -rf "$declared"                      # drop the empty placeholder dir
             mkdir -p "$(dirname "$declared")"
             if [ "${RUNNER_OS:-}" = "Windows" ]; then
-              # junction: works without admin / Developer Mode, unlike symlinks
+              # junction: works without admin / Developer Mode, unlike symlinks.
+              # Windows legs don't run inside Docker, so an absolute target is fine.
               cmd //c mklink //J "$(cygpath -w "$declared")" "$(cygpath -w "$PWD/$name")"
             else
-              ln -s "$(cd "$name" && pwd)" "$declared"
+              # RELATIVE symlink: the Linux build runs make inside a Docker
+              # container where the workspace is remapped to /duckdb_build_dir, so
+              # an absolute target would dangle. A relative link survives the remap.
+              updir=$(dirname "$declared")
+              ups=$(echo "$updir" | awk -F/ '{r="";for(i=1;i<=NF;i++)r=r"../";print r}')
+              ln -s "${ups}${name}" "$declared"
             fi
-            echo "mirrored ${declared} -> ./${name}"
+            echo "mirrored ${declared} -> ${ups:-}${name}"
           }
           mirror duckdb
           mirror extension-ci-tools
@@ -964,20 +976,32 @@ jobs:
           set -euo pipefail
           [ -f .gitmodules ] || { echo "no .gitmodules — nothing to mirror"; exit 0; }
           mirror() {
-            local name="$1" declared
+            local name="$1" declared updir ups
             declared=$(git config --file .gitmodules --get-regexp '^submodule\..*\.path$' \
               | awk '{print $2}' | grep -xE "(.*/)?${name}" | grep -vxE "${name}" | head -n1 || true)
             [ -n "$declared" ] || return 0          # not declared, or declared at root
-            [ ! -e "$declared" ] || return 0        # already populated
             [ -d "$name" ] || { echo "skip ${name}: no top-level ./${name}"; return 0; }
+            # The declared path exists as an EMPTY placeholder dir after the
+            # submodules:false checkout — only leave it alone if it has real
+            # content (a genuinely populated submodule).
+            if [ -e "$declared" ] && [ -n "$(ls -A "$declared" 2>/dev/null)" ]; then
+              echo "${declared} already populated — leaving as-is"; return 0
+            fi
+            rm -rf "$declared"                      # drop the empty placeholder dir
             mkdir -p "$(dirname "$declared")"
             if [ "${RUNNER_OS:-}" = "Windows" ]; then
-              # junction: works without admin / Developer Mode, unlike symlinks
+              # junction: works without admin / Developer Mode, unlike symlinks.
+              # Windows legs don't run inside Docker, so an absolute target is fine.
               cmd //c mklink //J "$(cygpath -w "$declared")" "$(cygpath -w "$PWD/$name")"
             else
-              ln -s "$(cd "$name" && pwd)" "$declared"
+              # RELATIVE symlink: the Linux build runs make inside a Docker
+              # container where the workspace is remapped to /duckdb_build_dir, so
+              # an absolute target would dangle. A relative link survives the remap.
+              updir=$(dirname "$declared")
+              ups=$(echo "$updir" | awk -F/ '{r="";for(i=1;i<=NF;i++)r=r"../";print r}')
+              ln -s "${ups}${name}" "$declared"
             fi
-            echo "mirrored ${declared} -> ./${name}"
+            echo "mirrored ${declared} -> ${ups:-}${name}"
           }
           mirror duckdb
           mirror extension-ci-tools
@@ -1417,20 +1441,32 @@ jobs:
           set -euo pipefail
           [ -f .gitmodules ] || { echo "no .gitmodules — nothing to mirror"; exit 0; }
           mirror() {
-            local name="$1" declared
+            local name="$1" declared updir ups
             declared=$(git config --file .gitmodules --get-regexp '^submodule\..*\.path$' \
               | awk '{print $2}' | grep -xE "(.*/)?${name}" | grep -vxE "${name}" | head -n1 || true)
             [ -n "$declared" ] || return 0          # not declared, or declared at root
-            [ ! -e "$declared" ] || return 0        # already populated
             [ -d "$name" ] || { echo "skip ${name}: no top-level ./${name}"; return 0; }
+            # The declared path exists as an EMPTY placeholder dir after the
+            # submodules:false checkout — only leave it alone if it has real
+            # content (a genuinely populated submodule).
+            if [ -e "$declared" ] && [ -n "$(ls -A "$declared" 2>/dev/null)" ]; then
+              echo "${declared} already populated — leaving as-is"; return 0
+            fi
+            rm -rf "$declared"                      # drop the empty placeholder dir
             mkdir -p "$(dirname "$declared")"
             if [ "${RUNNER_OS:-}" = "Windows" ]; then
-              # junction: works without admin / Developer Mode, unlike symlinks
+              # junction: works without admin / Developer Mode, unlike symlinks.
+              # Windows legs don't run inside Docker, so an absolute target is fine.
               cmd //c mklink //J "$(cygpath -w "$declared")" "$(cygpath -w "$PWD/$name")"
             else
-              ln -s "$(cd "$name" && pwd)" "$declared"
+              # RELATIVE symlink: the Linux build runs make inside a Docker
+              # container where the workspace is remapped to /duckdb_build_dir, so
+              # an absolute target would dangle. A relative link survives the remap.
+              updir=$(dirname "$declared")
+              ups=$(echo "$updir" | awk -F/ '{r="";for(i=1;i<=NF;i++)r=r"../";print r}')
+              ln -s "${ups}${name}" "$declared"
             fi
-            echo "mirrored ${declared} -> ./${name}"
+            echo "mirrored ${declared} -> ${ups:-}${name}"
           }
           mirror duckdb
           mirror extension-ci-tools
@@ -1724,20 +1760,32 @@ jobs:
           set -euo pipefail
           [ -f .gitmodules ] || { echo "no .gitmodules — nothing to mirror"; exit 0; }
           mirror() {
-            local name="$1" declared
+            local name="$1" declared updir ups
             declared=$(git config --file .gitmodules --get-regexp '^submodule\..*\.path$' \
               | awk '{print $2}' | grep -xE "(.*/)?${name}" | grep -vxE "${name}" | head -n1 || true)
             [ -n "$declared" ] || return 0          # not declared, or declared at root
-            [ ! -e "$declared" ] || return 0        # already populated
             [ -d "$name" ] || { echo "skip ${name}: no top-level ./${name}"; return 0; }
+            # The declared path exists as an EMPTY placeholder dir after the
+            # submodules:false checkout — only leave it alone if it has real
+            # content (a genuinely populated submodule).
+            if [ -e "$declared" ] && [ -n "$(ls -A "$declared" 2>/dev/null)" ]; then
+              echo "${declared} already populated — leaving as-is"; return 0
+            fi
+            rm -rf "$declared"                      # drop the empty placeholder dir
             mkdir -p "$(dirname "$declared")"
             if [ "${RUNNER_OS:-}" = "Windows" ]; then
-              # junction: works without admin / Developer Mode, unlike symlinks
+              # junction: works without admin / Developer Mode, unlike symlinks.
+              # Windows legs don't run inside Docker, so an absolute target is fine.
               cmd //c mklink //J "$(cygpath -w "$declared")" "$(cygpath -w "$PWD/$name")"
             else
-              ln -s "$(cd "$name" && pwd)" "$declared"
+              # RELATIVE symlink: the Linux build runs make inside a Docker
+              # container where the workspace is remapped to /duckdb_build_dir, so
+              # an absolute target would dangle. A relative link survives the remap.
+              updir=$(dirname "$declared")
+              ups=$(echo "$updir" | awk -F/ '{r="";for(i=1;i<=NF;i++)r=r"../";print r}')
+              ln -s "${ups}${name}" "$declared"
             fi
-            echo "mirrored ${declared} -> ./${name}"
+            echo "mirrored ${declared} -> ${ups:-}${name}"
           }
           mirror duckdb
           mirror extension-ci-tools

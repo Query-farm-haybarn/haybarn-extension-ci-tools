@@ -45,7 +45,7 @@ Inputs:
                       registry artifacts are built ('pypi' → wheel, 'npm' → leaf)
   --artifact-shape    bundled (core: npm-leaves/ + npm-metas/ dirs) |
                       per-extension (community: dist/npm/<leaf>.tar.gz, no meta)
-  --write-latest      also stage + sync the mutable <dv>/<arch>/<ext>.gz latest path
+  --write-latest      also stage + upload the mutable <dv>/<arch>/<ext>.gz latest path
   --deploy            when 'true', actually upload to R2; otherwise dry-run
 
 Env (required when --deploy true):
@@ -56,7 +56,7 @@ Env (required when --deploy true):
     AWS_DEFAULT_REGION / AWS_REQUEST_CHECKSUM_CALCULATION /
     AWS_RESPONSE_CHECKSUM_VALIDATION
   PUBLISH_CONCURRENCY           thread pool size (default: min(16, cpus*4))
-  PUBLISH_SYNC_CONCURRENCY      aws s3 sync transfer concurrency (default 32)
+  PUBLISH_SYNC_CONCURRENCY      aws s3 cp transfer concurrency (default 32)
   EXTENSION_UPLOAD_CACHE_CONTROL_LATEST   mutable latest/pointer Cache-Control
   EXTENSION_UPLOAD_CACHE_CONTROL_VERSIONED  immutable per-commit Cache-Control
 
@@ -274,15 +274,29 @@ def call_helper(name: str, *args: str) -> None:
     run(["python3", str(SCRIPT_DIR / name), *args])
 
 
-def aws_sync(stage_dir: pathlib.Path, dest: str, include: str, dry_run: bool,
-             cache_control: str, extra: list[str]) -> None:
-    """Ship a partition of the staged tree in one call. Mirrors the helper in
-    haybarn/scripts/haybarn_extension_upload.py: `--exclude '*' --include <pat>
-    --cache-control <cc>` plus `extra` (e.g. wasm `--content-encoding br
-    --content-type application/wasm`). sync skips objects already present with
-    the same size, so re-publishing a commit is cheap and the freshly-staged
-    mutable pointers re-upload."""
-    cmd = ["aws", "s3", "sync", str(stage_dir), dest, "--no-progress",
+def aws_upload(stage_dir: pathlib.Path, dest: str, include: str, dry_run: bool,
+               cache_control: str, extra: list[str]) -> None:
+    """Ship a partition of the staged tree in one recursive `aws s3 cp`.
+
+    Deliberately `cp --recursive`, NOT `s3 sync`. `sync` must LIST the entire
+    destination prefix before transferring anything, to diff and skip objects
+    already present. Here `dest` is the whole `community/` (or `core/`) prefix —
+    the full, ever-growing catalog (every extension × engine version × arch ×
+    per-commit immutable dir) — and `--include` only filters the *source* files
+    client-side, so each partition call re-lists the whole catalog. That listing
+    (sequential, 1000 keys/page) dominated Phase 2 and got slower on every
+    publish. `cp` issues straight PUTs and never lists the destination, so
+    Phase 2 is O(files-uploaded) and flat as the catalog grows.
+
+    Safe to drop sync's skip-if-present here: immutable objects live at a fresh
+    per-commit path (the skip can never fire), and the mutable pointers must
+    overwrite unconditionally — exactly what an unconditional `cp` does. `cp
+    --recursive` preserves the relative subtree under `dest` identically to
+    sync, so the resulting keys are unchanged. Mirrors the upload helper in
+    haybarn/scripts/haybarn_extension_upload.py (`--exclude '*' --include <pat>
+    --cache-control <cc>` plus `extra`, e.g. wasm `--content-encoding br
+    --content-type application/wasm`)."""
+    cmd = ["aws", "s3", "cp", str(stage_dir), dest, "--recursive", "--no-progress",
            "--exclude", "*", "--include", include, "--cache-control", cache_control]
     if dry_run:
         cmd.append("--dryrun")
@@ -589,33 +603,37 @@ def main(argv: list[str]) -> int:
         log(f"Phase 1 done: {total} tuples in {time.monotonic() - t0:.1f}s")
 
         # Phase 2: ship the staged trees. Partition by Cache-Control / metadata.
-        log(f"Phase 2/2: aws s3 sync -> s3://{args.r2_bucket}/{args.r2_prefix}")
+        # Each partition is one `aws s3 cp --recursive` (see aws_upload): no
+        # destination LIST, so this is O(files-uploaded) regardless of how big
+        # the catalog under r2_prefix has grown.
+        log(f"Phase 2/2: aws s3 cp -> s3://{args.r2_bucket}/{args.r2_prefix}")
         t1 = time.monotonic()
-        sync_conc = os.environ.get("PUBLISH_SYNC_CONCURRENCY", "32")
-        run(["aws", "configure", "set", "default.s3.max_concurrent_requests", sync_conc])
+        # Parallel-PUT fan-out for the recursive cp (env name kept for compat).
+        upload_conc = os.environ.get("PUBLISH_SYNC_CONCURRENCY", "32")
+        run(["aws", "configure", "set", "default.s3.max_concurrent_requests", upload_conc])
         dest = f"s3://{args.r2_bucket}/{args.r2_prefix}"
 
         # Per-commit immutable tree: binary (no content-encoding — the loader
         # gunzips .gz itself; wasm immutable matches today's no-encoding behavior),
         # manifest.json (json), .asc (pgp-signature). 1-year immutable Cache-Control.
-        aws_sync(immut_stage, dest, "*.duckdb_extension.gz", dry_run, cc_versioned, [])
-        aws_sync(immut_stage, dest, "*.duckdb_extension.wasm", dry_run, cc_versioned, [])
-        aws_sync(immut_stage, dest, "*manifest.json", dry_run, cc_versioned,
-                 ["--content-type", "application/json"])
-        aws_sync(immut_stage, dest, "*manifest.json.asc", dry_run, cc_versioned,
-                 ["--content-type", "application/pgp-signature"])
+        aws_upload(immut_stage, dest, "*.duckdb_extension.gz", dry_run, cc_versioned, [])
+        aws_upload(immut_stage, dest, "*.duckdb_extension.wasm", dry_run, cc_versioned, [])
+        aws_upload(immut_stage, dest, "*manifest.json", dry_run, cc_versioned,
+                   ["--content-type", "application/json"])
+        aws_upload(immut_stage, dest, "*manifest.json.asc", dry_run, cc_versioned,
+                   ["--content-type", "application/pgp-signature"])
         # current.json pointer (+ .asc) is mutable — short Cache-Control so the
         # edge serves the new pointer within seconds (NOT the 1yr immutable CC).
-        aws_sync(immut_stage, dest, "*current.json", dry_run, cc_latest,
-                 ["--content-type", "application/json"])
-        aws_sync(immut_stage, dest, "*current.json.asc", dry_run, cc_latest,
-                 ["--content-type", "application/pgp-signature"])
+        aws_upload(immut_stage, dest, "*current.json", dry_run, cc_latest,
+                   ["--content-type", "application/json"])
+        aws_upload(immut_stage, dest, "*current.json.asc", dry_run, cc_latest,
+                   ["--content-type", "application/pgp-signature"])
 
         # Mutable "latest" single-slot binaries (engine INSTALL path).
         if args.write_latest:
-            aws_sync(latest_stage, dest, "*.duckdb_extension.gz", dry_run, cc_latest, [])
-            aws_sync(latest_stage, dest, "*.duckdb_extension.wasm", dry_run, cc_latest,
-                     ["--content-encoding", "br", "--content-type", "application/wasm"])
+            aws_upload(latest_stage, dest, "*.duckdb_extension.gz", dry_run, cc_latest, [])
+            aws_upload(latest_stage, dest, "*.duckdb_extension.wasm", dry_run, cc_latest,
+                       ["--content-encoding", "br", "--content-type", "application/wasm"])
         log(f"Phase 2 done in {time.monotonic() - t1:.1f}s")
 
         # 7. Per-extension npm meta packages (bundled mode only) — community's

@@ -776,7 +776,13 @@ jobs:
 
   macos:
     name: MacOS
-    runs-on: macos-latest
+    # Haybarn: pinned to macos-15 (Sequoia, Apple Silicon). macos-latest now
+    # resolves to the macOS 26 "Tahoe" image (Xcode 26.5 / AppleClang 21) on
+    # part of GitHub's fleet, whose `libtool -V` output Apache Arrow's
+    # cmake_modules/BuildUtils.cmake rejects ("libtool found appears not to be
+    # Apple's libtool"), failing the arrow vcpkg port at configure. Pinning
+    # avoids Tahoe until the Arrow libtool check is patched via an overlay port.
+    runs-on: macos-15
     needs:
       - generate_matrix
     if: |

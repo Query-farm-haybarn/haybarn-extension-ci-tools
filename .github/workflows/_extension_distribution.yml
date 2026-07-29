@@ -223,7 +223,15 @@ on:
       prebuilt_image_tag:
         required: false
         type: string
-        default: 'v1.5.2'
+        # Keep in lockstep with publish-build-images.yml's engine_version default.
+        # Historically this was 'v1.5.2', which had silently become the *rolling*
+        # tag: publish-build-images.yml's push trigger defaulted to the same value,
+        # so every docker/** change re-pushed :v1.5.2, and the engine's core-extension
+        # build (which passes no prebuilt_image_tag) consumed it. The per-release
+        # :v1.5.x tags were only ever consumed by haybarn-community-extensions.
+        # Both defaults now move together each release so the engine build gets the
+        # images that were actually built for its engine version.
+        default: 'v1.5.5'
       # The org/user namespace under ghcr.io that holds the published images.
       # Defaults to the Haybarn org; can be overridden if a fork republishes
       # the image set under a different namespace.

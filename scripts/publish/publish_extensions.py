@@ -613,11 +613,14 @@ def main(argv: list[str]) -> int:
         run(["aws", "configure", "set", "default.s3.max_concurrent_requests", upload_conc])
         dest = f"s3://{args.r2_bucket}/{args.r2_prefix}"
 
-        # Per-commit immutable tree: binary (no content-encoding — the loader
-        # gunzips .gz itself; wasm immutable matches today's no-encoding behavior),
-        # manifest.json (json), .asc (pgp-signature). 1-year immutable Cache-Control.
+        # Per-commit immutable tree: native binaries stay encoded as .gz for the
+        # loader to decompress. Browser fetches must decode WASM before DuckDB
+        # verifies its embedded signature, so immutable WASM objects need the
+        # same Brotli Content-Encoding as the rolling-latest objects.
+        # Manifests and detached signatures retain their explicit content types.
         aws_upload(immut_stage, dest, "*.duckdb_extension.gz", dry_run, cc_versioned, [])
-        aws_upload(immut_stage, dest, "*.duckdb_extension.wasm", dry_run, cc_versioned, [])
+        aws_upload(immut_stage, dest, "*.duckdb_extension.wasm", dry_run, cc_versioned,
+                   ["--content-encoding", "br", "--content-type", "application/wasm"])
         aws_upload(immut_stage, dest, "*manifest.json", dry_run, cc_versioned,
                    ["--content-type", "application/json"])
         aws_upload(immut_stage, dest, "*manifest.json.asc", dry_run, cc_versioned,

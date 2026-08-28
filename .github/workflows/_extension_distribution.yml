@@ -373,6 +373,33 @@ jobs:
       DUCKDB_PLATFORM: ${{ matrix.duckdb_arch }}
 
     steps:
+      - name: Compute DUCKDB_TEST_VERSION
+        shell: bash
+        run: |
+          # Haybarn: every community extension's own top-level Makefile (from
+          # DuckDB's extension-template/extension-template-rs) hardcodes
+          # `DUCKDB_TEST_VERSION?=<bare X.Y.Z>` (stripped from its own
+          # TARGET_DUCKDB_VERSION) before including this repo's makefiles.
+          # That pins `pip install haybarn-cli==X.Y.Z` for the test-time
+          # engine — but haybarn-cli has so far never published a final
+          # (non-rc) release for any 1.5.x version, only rc builds, so the
+          # inherited pin 404s every time regardless of which extension it
+          # is. Make's `?=` only applies when a variable isn't already
+          # defined, and an inherited environment variable counts as
+          # already defined, so exporting it here overrides every
+          # extension's own Makefile no matter what it hardcodes. Derived
+          # from duckdb_version (not left as `--pre`) so the test-time
+          # engine also matches the exact RC the extension was built
+          # against — fixes a second failure class where a binary built
+          # against an RC engine gets rejected by DuckDB's library_version
+          # guard because the test venv installed a newer "latest" build
+          # instead of that RC. GHA expressions have no string
+          # substitution/regex, hence doing this in bash instead of `env:`.
+          v="${{ inputs.duckdb_version }}"
+          v="${v#haybarn-v}"
+          v="${v/-rc/rc}"
+          echo "DUCKDB_TEST_VERSION=$v" >> "$GITHUB_ENV"
+
       - name: Free disk space 1
         uses: endersonmenezes/free-disk-space@v2.1.1
         continue-on-error: true
@@ -646,6 +673,9 @@ jobs:
           # Haybarn: forward the normalized version label into the container so
           # CMake embeds the right engine library_version in the extension binary.
           OVERRIDE_GIT_DESCRIBE=${{ startsWith(inputs.duckdb_version, 'haybarn-v1.5.5') && 'v1.5.5' || startsWith(inputs.duckdb_version, 'haybarn-v1.5.4') && 'v1.5.4' || startsWith(inputs.duckdb_version, 'haybarn-v1.5.3') && 'v1.5.3' || inputs.duckdb_version }}
+          # Haybarn: see the "Compute DUCKDB_TEST_VERSION" step above — the
+          # container only sees vars explicitly listed here.
+          DUCKDB_TEST_VERSION=$DUCKDB_TEST_VERSION
           ENABLE_EXTENSION_AUTOINSTALL=1
           ENABLE_EXTENSION_AUTOLOADING=1
           EXTENSION_NAME=${{ inputs.extension_name }}
@@ -837,6 +867,16 @@ jobs:
       CCACHE_REMOTE_STORAGE: "http://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache|bearer-token=${{ secrets.vcpkg_token }}|connect-timeout=10000|operation-timeout=30000"
 
     steps:
+      - name: Compute DUCKDB_TEST_VERSION
+        shell: bash
+        run: |
+          # Haybarn: see the linux job's "Compute DUCKDB_TEST_VERSION" step
+          # for why this is needed.
+          v="${{ inputs.duckdb_version }}"
+          v="${v#haybarn-v}"
+          v="${v/-rc/rc}"
+          echo "DUCKDB_TEST_VERSION=$v" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v6
         name: Checkout override repository
         if: ${{inputs.override_repository != ''}}
@@ -1243,6 +1283,16 @@ jobs:
       COMMON_CMAKE_VARS: "-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
 
     steps:
+      - name: Compute DUCKDB_TEST_VERSION
+        shell: bash
+        run: |
+          # Haybarn: see the linux job's "Compute DUCKDB_TEST_VERSION" step
+          # for why this is needed.
+          v="${{ inputs.duckdb_version }}"
+          v="${v#haybarn-v}"
+          v="${v/-rc/rc}"
+          echo "DUCKDB_TEST_VERSION=$v" >> "$GITHUB_ENV"
+
       - name: Downgrade AWS cli
         shell: powershell
         if: ${{ (contains(format(';{0};', inputs.extra_toolchains), ';downgraded_aws_cli;')) }}
@@ -1666,6 +1716,16 @@ jobs:
       CCACHE_REMOTE_STORAGE: "http://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache|bearer-token=${{ secrets.vcpkg_token }}|connect-timeout=10000|operation-timeout=30000"
 
     steps:
+      - name: Compute DUCKDB_TEST_VERSION
+        shell: bash
+        run: |
+          # Haybarn: see the linux job's "Compute DUCKDB_TEST_VERSION" step
+          # for why this is needed.
+          v="${{ inputs.duckdb_version }}"
+          v="${v#haybarn-v}"
+          v="${v/-rc/rc}"
+          echo "DUCKDB_TEST_VERSION=$v" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v6
         name: Checkout override repository
         if: ${{inputs.override_repository != ''}}
@@ -1961,6 +2021,9 @@ jobs:
           # Haybarn: forward the normalized version label into the container so
           # CMake embeds the right engine library_version in the extension binary.
           OVERRIDE_GIT_DESCRIBE=${{ startsWith(inputs.duckdb_version, 'haybarn-v1.5.5') && 'v1.5.5' || startsWith(inputs.duckdb_version, 'haybarn-v1.5.4') && 'v1.5.4' || startsWith(inputs.duckdb_version, 'haybarn-v1.5.3') && 'v1.5.3' || inputs.duckdb_version }}
+          # Haybarn: see the "Compute DUCKDB_TEST_VERSION" step above — the
+          # container only sees vars explicitly listed here.
+          DUCKDB_TEST_VERSION=$DUCKDB_TEST_VERSION
           EXTENSION_NAME=${{ inputs.extension_name }}
           EXTENSION_CANONICAL=${{ inputs.extension_canonical }}
           ENABLE_EXTENSION_AUTOINSTALL=1

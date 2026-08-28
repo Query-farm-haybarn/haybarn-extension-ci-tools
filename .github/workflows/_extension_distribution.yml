@@ -727,7 +727,12 @@ jobs:
           DUCKDB_GIT_VERSION: ${{ inputs.duckdb_version }}
           LINUX_CI_IN_DOCKER: 0
         run: |
-          make configure_ci
+          # Haybarn: pass DUCKDB_TEST_VERSION on make's command line, not just
+          # via the environment. Some extensions' own Makefiles assign it
+          # unconditionally (`DUCKDB_TEST_VERSION=...`, plain `=`), which beats
+          # an inherited env var but NOT a command-line override — this is the
+          # only form of override Make lets nothing else in the Makefile beat.
+          make DUCKDB_TEST_VERSION="$DUCKDB_TEST_VERSION" configure_ci
 
       - name: Install extra vcpkg dependencies
         if: ${{ inputs.vcpkg_extra_dependencies != '' }}
@@ -752,7 +757,9 @@ jobs:
       - name: Run configure (inside Docker)
         shell: bash
         run: |
-          docker run --env-file=docker_env.txt -v `pwd`:/duckdb_build_dir -v `pwd`/ccache_dir:/ccache_dir duckdb/${{ matrix.duckdb_arch }} make configure_ci
+          # Haybarn: see the "Run configure (outside Docker)" step above for
+          # why DUCKDB_TEST_VERSION is passed as a make command-line override.
+          docker run --env-file=docker_env.txt -v `pwd`:/duckdb_build_dir -v `pwd`/ccache_dir:/ccache_dir duckdb/${{ matrix.duckdb_arch }} make DUCKDB_TEST_VERSION="$DUCKDB_TEST_VERSION" configure_ci
 
       - name: Build extension (inside Docker)
         run: |
@@ -1179,7 +1186,9 @@ jobs:
         env:
           DUCKDB_GIT_VERSION: ${{ inputs.duckdb_version }}
         run: |
-          make configure_ci
+          # Haybarn: see the linux job's "Run configure (outside Docker)" step
+          # for why DUCKDB_TEST_VERSION is passed as a make command-line override.
+          make DUCKDB_TEST_VERSION="$DUCKDB_TEST_VERSION" configure_ci
 
       - name: Install extra vcpkg dependencies
         if: ${{ inputs.vcpkg_extra_dependencies != '' }}
@@ -1578,7 +1587,9 @@ jobs:
           DUCKDB_PLATFORM_RTOOLS: ${{ (matrix.duckdb_arch == 'windows_amd64_rtools' || matrix.duckdb_arch == 'windows_amd64_mingw') && 1 || 0 }}
           DUCKDB_GIT_VERSION: ${{ inputs.duckdb_version }}
         run: |
-          make configure_ci
+          # Haybarn: see the linux job's "Run configure (outside Docker)" step
+          # for why DUCKDB_TEST_VERSION is passed as a make command-line override.
+          make DUCKDB_TEST_VERSION="$DUCKDB_TEST_VERSION" configure_ci
 
       - name: Install extra vcpkg dependencies
         shell: bash
@@ -2094,7 +2105,9 @@ jobs:
         env:
           DUCKDB_GIT_VERSION: ${{ inputs.duckdb_version }}
         run: |
-          make configure_ci
+          # Haybarn: see the linux job's "Run configure (outside Docker)" step
+          # for why DUCKDB_TEST_VERSION is passed as a make command-line override.
+          make DUCKDB_TEST_VERSION="$DUCKDB_TEST_VERSION" configure_ci
 
       - name: Install extra vcpkg dependencies
         if: ${{ inputs.vcpkg_extra_dependencies != '' && !inputs.use_prebuilt_wasm_image }}
@@ -2122,11 +2135,15 @@ jobs:
         if: ${{ inputs.use_prebuilt_wasm_image }}
         shell: bash
         run: |
+          # Haybarn: see the linux job's "Run configure (outside Docker)" step
+          # for why DUCKDB_TEST_VERSION is passed as a make command-line
+          # override — expanded inside the container from docker_env.txt,
+          # since this whole string is single-quoted (no host-side expansion).
           docker run --env-file=docker_env.txt \
             -v "$PWD":/duckdb_build_dir \
             -v "$PWD"/ccache_dir:/ccache_dir \
             "${{ steps.wasm_image.outputs.ref }}" \
-            bash -lc 'source /emsdk/emsdk_env.sh > /dev/null && make configure_ci'
+            bash -lc 'source /emsdk/emsdk_env.sh > /dev/null && make DUCKDB_TEST_VERSION="$DUCKDB_TEST_VERSION" configure_ci'
 
       - name: Install extra vcpkg dependencies (inside Docker)
         if: ${{ inputs.use_prebuilt_wasm_image && inputs.vcpkg_extra_dependencies != '' }}

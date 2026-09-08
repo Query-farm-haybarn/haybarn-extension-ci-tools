@@ -16,6 +16,11 @@ on:
         description: extension-ci-tools ref used by build and test jobs
         required: true
         type: string
+      prepare_ci_tools_ref:
+        description: Ref available in the extension repository's extension-ci-tools submodule during source preparation
+        required: false
+        type: string
+        default: main
       groups:
         description: YAML extension groups passed to duckdb-ci/matrix
         required: true
@@ -202,7 +207,7 @@ jobs:
         with:
           extension-repository: ${{ inputs.extension_repository != '' && inputs.extension_repository || github.repository }}
           extension-ref: ${{ inputs.extension_ref }}
-          ci-tools-ref: ${{ inputs.ci_tools_version }}
+          ci-tools-ref: ${{ inputs.prepare_ci_tools_ref }}
           duckdb-repository: ${{ inputs.duckdb_repository }}
           duckdb-ref: ${{ inputs.duckdb_version }}
           duckdb-sha: ${{ inputs.duckdb_version }}
@@ -271,7 +276,7 @@ jobs:
         with:
           extension-repository: ${{ inputs.extension_repository != '' && inputs.extension_repository || github.repository }}
           extension-ref: ${{ inputs.extension_ref }}
-          ci-tools-ref: ${{ inputs.ci_tools_version }}
+          ci-tools-ref: ${{ inputs.prepare_ci_tools_ref }}
           duckdb-repository: ${{ inputs.duckdb_repository != '' && inputs.duckdb_repository || 'duckdb/duckdb' }}
           duckdb-ref: ${{ inputs.duckdb_version }}
           duckdb-sha: ${{ inputs.duckdb_version }}
@@ -352,7 +357,7 @@ jobs:
         with:
           extension-repository: ${{ inputs.extension_repository != '' && inputs.extension_repository || github.repository }}
           extension-ref: ${{ inputs.extension_ref }}
-          ci-tools-ref: ${{ inputs.ci_tools_version }}
+          ci-tools-ref: ${{ inputs.prepare_ci_tools_ref }}
           duckdb-repository: ${{ inputs.duckdb_repository != '' && inputs.duckdb_repository || 'duckdb/duckdb' }}
           duckdb-ref: ${{ inputs.duckdb_version }}
           duckdb-sha: ${{ inputs.duckdb_version }}
@@ -453,7 +458,7 @@ jobs:
         with:
           extension-repository: ${{ inputs.extension_repository != '' && inputs.extension_repository || github.repository }}
           extension-ref: ${{ inputs.extension_ref }}
-          ci-tools-ref: ${{ inputs.ci_tools_version }}
+          ci-tools-ref: ${{ inputs.prepare_ci_tools_ref }}
           duckdb-repository: ${{ inputs.duckdb_repository != '' && inputs.duckdb_repository || 'duckdb/duckdb' }}
           duckdb-ref: ${{ inputs.duckdb_version }}
           duckdb-sha: ${{ inputs.duckdb_version }}
@@ -532,7 +537,7 @@ jobs:
         with:
           extension-repository: ${{ inputs.extension_repository != '' && inputs.extension_repository || github.repository }}
           extension-ref: ${{ inputs.extension_ref }}
-          ci-tools-ref: ${{ inputs.ci_tools_version }}
+          ci-tools-ref: ${{ inputs.prepare_ci_tools_ref }}
           duckdb-repository: ${{ inputs.duckdb_repository != '' && inputs.duckdb_repository || 'duckdb/duckdb' }}
           duckdb-ref: ${{ inputs.duckdb_version }}
           duckdb-sha: ${{ inputs.duckdb_version }}
@@ -576,7 +581,7 @@ jobs:
         with:
           extension-repository: ${{ inputs.extension_repository != '' && inputs.extension_repository || github.repository }}
           extension-ref: ${{ inputs.extension_ref }}
-          ci-tools-ref: ${{ inputs.ci_tools_version }}
+          ci-tools-ref: ${{ inputs.prepare_ci_tools_ref }}
           duckdb-repository: ${{ inputs.duckdb_repository != '' && inputs.duckdb_repository || 'duckdb/duckdb' }}
           duckdb-ref: ${{ inputs.duckdb_version }}
           duckdb-sha: ${{ inputs.duckdb_version }}
@@ -631,7 +636,7 @@ jobs:
         with:
           extension-repository: ${{ inputs.extension_repository != '' && inputs.extension_repository || github.repository }}
           extension-ref: ${{ inputs.extension_ref }}
-          ci-tools-ref: ${{ inputs.ci_tools_version }}
+          ci-tools-ref: ${{ inputs.prepare_ci_tools_ref }}
           duckdb-repository: ${{ inputs.duckdb_repository != '' && inputs.duckdb_repository || 'duckdb/duckdb' }}
           duckdb-ref: ${{ inputs.duckdb_version }}
           duckdb-sha: ${{ inputs.duckdb_version }}

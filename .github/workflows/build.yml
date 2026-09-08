@@ -264,6 +264,7 @@ jobs:
         with:
           extension-repository: ${{ inputs.extension_repository != '' && inputs.extension_repository || github.repository }}
           extension-ref: ${{ inputs.extension_ref }}
+          ci-tools-ref: ${{ inputs.ci_tools_version }}
           duckdb-repository: ${{ inputs.duckdb_repository }}
           duckdb-ref: ${{ needs.matrix.outputs.duckdb_commit }}
           duckdb-sha: ${{ needs.matrix.outputs.duckdb_commit }}
@@ -347,6 +348,7 @@ jobs:
         with:
           extension-repository: ${{ inputs.extension_repository != '' && inputs.extension_repository || github.repository }}
           extension-ref: ${{ inputs.extension_ref }}
+          ci-tools-ref: ${{ inputs.ci_tools_version }}
           duckdb-repository: ${{ inputs.duckdb_repository != '' && inputs.duckdb_repository || 'duckdb/duckdb' }}
           duckdb-ref: ${{ needs.matrix.outputs.duckdb_commit }}
           duckdb-sha: ${{ needs.matrix.outputs.duckdb_commit }}
@@ -443,6 +445,7 @@ jobs:
         with:
           extension-repository: ${{ inputs.extension_repository != '' && inputs.extension_repository || github.repository }}
           extension-ref: ${{ inputs.extension_ref }}
+          ci-tools-ref: ${{ inputs.ci_tools_version }}
           duckdb-repository: ${{ inputs.duckdb_repository != '' && inputs.duckdb_repository || 'duckdb/duckdb' }}
           duckdb-ref: ${{ needs.matrix.outputs.duckdb_commit }}
           duckdb-sha: ${{ needs.matrix.outputs.duckdb_commit }}
@@ -555,6 +558,7 @@ jobs:
         with:
           extension-repository: ${{ inputs.extension_repository != '' && inputs.extension_repository || github.repository }}
           extension-ref: ${{ inputs.extension_ref }}
+          ci-tools-ref: ${{ inputs.ci_tools_version }}
           duckdb-repository: ${{ inputs.duckdb_repository != '' && inputs.duckdb_repository || 'duckdb/duckdb' }}
           duckdb-ref: ${{ needs.matrix.outputs.duckdb_commit }}
           duckdb-sha: ${{ needs.matrix.outputs.duckdb_commit }}
@@ -639,6 +643,7 @@ jobs:
         with:
           extension-repository: ${{ inputs.extension_repository != '' && inputs.extension_repository || github.repository }}
           extension-ref: ${{ inputs.extension_ref }}
+          ci-tools-ref: ${{ inputs.ci_tools_version }}
           duckdb-repository: ${{ inputs.duckdb_repository != '' && inputs.duckdb_repository || 'duckdb/duckdb' }}
           duckdb-ref: ${{ needs.matrix.outputs.duckdb_commit }}
           duckdb-sha: ${{ needs.matrix.outputs.duckdb_commit }}
@@ -684,6 +689,7 @@ jobs:
         with:
           extension-repository: ${{ inputs.extension_repository != '' && inputs.extension_repository || github.repository }}
           extension-ref: ${{ inputs.extension_ref }}
+          ci-tools-ref: ${{ inputs.ci_tools_version }}
           duckdb-repository: ${{ inputs.duckdb_repository != '' && inputs.duckdb_repository || 'duckdb/duckdb' }}
           duckdb-ref: ${{ needs.matrix.outputs.duckdb_commit }}
           duckdb-sha: ${{ needs.matrix.outputs.duckdb_commit }}
@@ -741,6 +747,7 @@ jobs:
         with:
           extension-repository: ${{ inputs.extension_repository != '' && inputs.extension_repository || github.repository }}
           extension-ref: ${{ inputs.extension_ref }}
+          ci-tools-ref: ${{ inputs.ci_tools_version }}
           duckdb-repository: ${{ inputs.duckdb_repository != '' && inputs.duckdb_repository || 'duckdb/duckdb' }}
           duckdb-ref: ${{ needs.matrix.outputs.duckdb_commit }}
           duckdb-sha: ${{ needs.matrix.outputs.duckdb_commit }}

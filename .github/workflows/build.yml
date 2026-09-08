@@ -13,6 +13,11 @@ on:
         required: false
         type: string
         default: ""
+      override_git_describe:
+        description: Version string embedded in DuckDB and extension binaries
+        required: false
+        type: string
+        default: ""
       ci_tools_version:
         description: extension-ci-tools ref used by build and test jobs
         required: false
@@ -41,7 +46,7 @@ on:
         description: Repository containing extension-ci-tools
         required: false
         type: string
-        default: duckdb/extension-ci-tools
+        default: Query-farm-haybarn/haybarn-extension-ci-tools
       exclude_archs:
         description: Semicolon-separated architectures to exclude
         required: false
@@ -107,6 +112,21 @@ on:
         required: false
         type: string
         default: cl
+      vcpkg_binary_sources:
+        description: vcpkg binary cache configuration; {0} is replaced with vcpkg_token
+        required: false
+        type: string
+        default: ""
+      vcpkg_asset_sources:
+        description: vcpkg asset cache configuration
+        required: false
+        type: string
+        default: ""
+      ccache_remote_storage:
+        description: ccache remote configuration; {0} is replaced with vcpkg_token
+        required: false
+        type: string
+        default: ""
     secrets:
       VCPKG_CACHING_AWS_ACCESS_KEY_ID:
         required: false
@@ -115,6 +135,8 @@ on:
       VCPKG_CACHING_AWS_ENDPOINT_URL:
         required: false
       VCPKG_CACHING_AWS_DEFAULT_REGION:
+        required: false
+      vcpkg_token:
         required: false
     outputs:
       duckdb_version:
@@ -129,6 +151,7 @@ permissions:
   packages: read
 
 env:
+  OVERRIDE_GIT_DESCRIBE: ${{ inputs.override_git_describe }}
   CI_BUILD_TYPE: release
   CI_BUILD_DUCKDB_SHELL: true
   CI_UPLOAD_ALL_EXTENSIONS: true
@@ -139,7 +162,12 @@ env:
   CI_VCPKG_OVERLAY_PORTS: extension-ci-tools/vcpkg_ports
   CI_VCPKG_OVERLAY_TRIPLETS: extension-ci-tools/toolchains
   CI_CUDA_VERSION: 13
-  VCPKG_BINARY_SOURCES: clear;http,https://vcpkg-cache.duckdb.org,read
+  # Haybarn's cache reads are anonymous; writes use a bearer token. GitHub
+  # does not allow callers to interpolate a secret into a reusable-workflow
+  # input, so this workflow owns the substitution of the {0} placeholder.
+  VCPKG_BINARY_SOURCES: "${{ format(inputs.vcpkg_binary_sources == '' && 'clear;http,https://haybarn-vcpkg-cache.rusty-bb6.workers.dev,readwrite,Authorization: Bearer {0}' || inputs.vcpkg_binary_sources, secrets.vcpkg_token) }}"
+  X_VCPKG_ASSET_SOURCES: "${{ inputs.vcpkg_asset_sources == '' && format('clear;x-azurl,https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/assets/,auth={0},readwrite', secrets.vcpkg_token) || inputs.vcpkg_asset_sources }}"
+  CCACHE_REMOTE_STORAGE: "${{ format(inputs.ccache_remote_storage == '' && 'http://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache|bearer-token={0}|connect-timeout=10000|operation-timeout=30000' || inputs.ccache_remote_storage, secrets.vcpkg_token) }}"
   AWS_REQUEST_CHECKSUM_CALCULATION: when_required
   GEN: ninja
 

@@ -59,7 +59,12 @@ on:
       duckdb_version:
         required: false
         type: string
-        default: 'v1.5.2'
+        default: 'v2.0.0'
+      publish_pypi:
+        description: 'Publish Python wheels in addition to npm packages'
+        required: false
+        type: boolean
+        default: false
       # per-extension mode only — passed from the build's deploy job outputs:
       version:
         required: false
@@ -109,10 +114,7 @@ jobs:
   # ------------------------------------------------------------------
   publish_pypi:
     name: Publish PyPI
-    # Temporarily disabled: PyPI uploads are hitting HTTP 429 (rate limit) and
-    # the wheels aren't the priority right now. R2 + npm publish are unaffected.
-    # Re-enable by removing this `if: false` (or wiring a publish_pypi input).
-    if: ${{ false }}
+    if: ${{ inputs.publish_pypi }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -222,8 +224,8 @@ jobs:
           set -uo pipefail
           npm_publish_one() {
             d="$1"
-            pkg=$(python3 -c "import json; print(json.load(open('$d/package.json'))['name'])")
-            ver=$(python3 -c "import json; print(json.load(open('$d/package.json'))['version'])")
+            pkg=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$d/package.json")
+            ver=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$d/package.json")
             err=$(mktemp)
             if (cd "$d" && npm publish --provenance --access public --tag latest 2>"$err"); then
               echo "OK   $pkg@$ver"
@@ -236,6 +238,8 @@ jobs:
             rm -f "$err"
           }
           export -f npm_publish_one
+          # $1 is expanded by the inner bash.
+          # shellcheck disable=SC2016
           find dist/npm-leaves -mindepth 1 -maxdepth 1 -type d -print0 \
             | xargs -0 -P "$NPM_PUBLISH_CONCURRENCY" -I{} bash -c 'npm_publish_one "$1"' _ {} \
             | tee /tmp/leaf-results.txt
@@ -256,8 +260,8 @@ jobs:
           set -uo pipefail
           npm_publish_one() {
             d="$1"
-            pkg=$(python3 -c "import json; print(json.load(open('$d/package.json'))['name'])")
-            ver=$(python3 -c "import json; print(json.load(open('$d/package.json'))['version'])")
+            pkg=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$d/package.json")
+            ver=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$d/package.json")
             err=$(mktemp)
             if (cd "$d" && npm publish --provenance --access public --tag latest 2>"$err"); then
               echo "OK   $pkg@$ver"
@@ -270,6 +274,8 @@ jobs:
             rm -f "$err"
           }
           export -f npm_publish_one
+          # $1 is expanded by the inner bash.
+          # shellcheck disable=SC2016
           find dist/npm-metas -mindepth 1 -maxdepth 1 -type d -print0 \
             | xargs -0 -P "$NPM_PUBLISH_CONCURRENCY" -I{} bash -c 'npm_publish_one "$1"' _ {} \
             | tee /tmp/meta-results.txt
@@ -373,8 +379,8 @@ jobs:
           # one OK/SKIP/FAIL marker the aggregation greps.
           npm_publish_one() {
             d="$1"
-            pkg=$(python3 -c "import json; print(json.load(open('$d/package.json'))['name'])")
-            ver=$(python3 -c "import json; print(json.load(open('$d/package.json'))['version'])")
+            pkg=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$d/package.json")
+            ver=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$d/package.json")
             err=$(mktemp)
             if (cd "$d" && npm publish --provenance --access public --tag latest 2>"$err"); then
               echo "OK   $pkg@$ver"
@@ -387,6 +393,8 @@ jobs:
             rm -f "$err"
           }
           export -f npm_publish_one
+          # $1 is expanded by the inner bash.
+          # shellcheck disable=SC2016
           find staged -mindepth 1 -maxdepth 1 -type d -print0 \
             | xargs -0 -P "$NPM_PUBLISH_CONCURRENCY" -I{} bash -c 'npm_publish_one "$1"' _ {} \
             | tee /tmp/leaf-results.txt

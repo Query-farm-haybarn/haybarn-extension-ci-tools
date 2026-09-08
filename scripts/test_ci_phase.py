@@ -402,6 +402,9 @@ class CIPhaseTest(unittest.TestCase):
             unittest_binary.parent.mkdir(parents=True)
             unittest_binary.write_text("runner", encoding="utf-8")
             unittest_binary.chmod(0o755)
+            haybarn_library = build / "src" / "libhaybarn.so"
+            haybarn_library.parent.mkdir(parents=True)
+            haybarn_library.write_text("shared library", encoding="utf-8")
             repository = build / "repository" / "v1" / "linux_amd64"
             repository.mkdir(parents=True)
             (repository / "quack.duckdb_extension").write_text("extension", encoding="utf-8")
@@ -431,6 +434,7 @@ class CIPhaseTest(unittest.TestCase):
                 names = bundle.getnames()
                 unittest_member = bundle.getmember(f"release/test/{unittest_binary.name}")
             self.assertIn(f"release/test/{unittest_binary.name}", names)
+            self.assertIn("release/src/libhaybarn.so", names)
             self.assertFalse(any("repository" in name for name in names))
             if os.name != "nt":
                 self.assertNotEqual(unittest_member.mode & 0o111, 0)

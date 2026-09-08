@@ -3,6 +3,34 @@ This repository contains reusable components for building, testing and deploying
 
 DuckDB's [Extension Template](https://github.com/duckdb/extension-template/actions) and various DuckDB Extensions based on the template use this repository to deduplicate code for build configuration and easily update the extension repositories when changes occur to DuckDB's build system and/or CI.
 
+## Pinning DuckDB to the submodule
+
+Extensions vendor DuckDB as a submodule, but pass `duckdb_version` to the build workflows as a
+literal, so the two are kept in sync by hand. `_submodule_version.yml` resolves the submodule's pin
+instead, making the submodule the single source of truth:
+
+```yaml
+jobs:
+  duckdb-submodule-version:
+    uses: duckdb/extension-ci-tools/.github/workflows/_submodule_version.yml@main
+
+  duckdb-stable-build:
+    needs: duckdb-submodule-version
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
+    with:
+      duckdb_version: ${{ needs.duckdb-submodule-version.outputs.version }}
+      ci_tools_version: main
+      extension_name: <name>
+```
+
+Bumping the submodule is then the only action that moves CI. `submodule_path` defaults to `duckdb`
+and can be set to resolve a different submodule.
+
+Note that passing `duckdb_version: ''` also builds whatever the submodule points at, since the
+calling repository is checked out with `submodules: recursive` and the ref is only overridden when
+non-empty. That path loses the version in artifact names and ccache keys, which the workflow above
+preserves.
+
 ## Versioning
 | Extension-ci-tools Branch | DuckDB target version | Actively maintained? |
 |---------------------------|-----------------------|----------------------|

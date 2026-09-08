@@ -926,6 +926,7 @@ class PhaseRunner:
 
         for pattern in (
             "src/libduckdb.*",
+            "src/libhaybarn.*",
             "test/extension/*.duckdb_extension",
             "test/extension/*.duckdb_extension.wasm",
         ):

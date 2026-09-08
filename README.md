@@ -1,6 +1,12 @@
 # Extension CI Tools for DuckDB
 This repository contains reusable components for building, testing and deploying DuckDB extensions.
 
+The `next-2.0` branch in the Query Farm fork is the Haybarn build and
+publication harness for DuckDB 2.0 development. It follows upstream's new
+`build.yml` workflow and adds authenticated Haybarn caches plus the shared
+Haybarn R2, npm, and PyPI publication tooling. Stable Haybarn 1.5 builds remain
+on the `haybarn` branch.
+
 DuckDB's [Extension Template](https://github.com/duckdb/extension-template/actions) and various DuckDB Extensions based on the template use this repository to deduplicate code for build configuration and easily update the extension repositories when changes occur to DuckDB's build system and/or CI.
 
 ## Pinning DuckDB to the submodule

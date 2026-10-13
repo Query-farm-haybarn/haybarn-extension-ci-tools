@@ -827,6 +827,8 @@ jobs:
     # cmake_modules/BuildUtils.cmake rejects ("libtool found appears not to be
     # Apple's libtool"), failing the arrow vcpkg port at configure. Pinning
     # avoids Tahoe until the Arrow libtool check is patched via an overlay port.
+    # Upstream has since pinned the same image via matrix.runner
+    # (config/distribution_matrix.json); the explicit pin here is kept as-is.
     runs-on: macos-15
     needs:
       - generate_matrix
@@ -872,6 +874,9 @@ jobs:
       # Local cache stays L1; R2 is L2 shared across repos/runners/branches —
       # survives GH cache flakiness + outlives any single repo's cache scope.
       CCACHE_REMOTE_STORAGE: "http://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache|bearer-token=${{ secrets.vcpkg_token }}|connect-timeout=10000|operation-timeout=30000"
+      # Intel Homebrew is deprecated; keep this installer pin only while osx_amd64 is
+      # supported. See https://github.com/Homebrew/brew/blob/main/docs/Support-Tiers.md#future-macos-support
+      INTEL_HOMEBREW_INSTALLER: https://raw.githubusercontent.com/Homebrew/install/0f5b7666a65fc2d1a2615549f02771353c250f9a/install.sh
 
     steps:
       - name: Compute DUCKDB_TEST_VERSION
@@ -1140,7 +1145,7 @@ jobs:
       - name: install omp (x86)
         if: ${{ contains(format(';{0};', inputs.extra_toolchains), ';omp;') && matrix.duckdb_arch == 'osx_amd64' }}
         run: |
-          arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install.sh)"
+          arch -x86_64 /bin/bash -c "$(curl -fsSL $INTEL_HOMEBREW_INSTALLER)"
           (echo; echo 'eval "$(/usr/local/bin/brew shellenv)"') >> /Users/runner/.bash_profile
           eval "$(/usr/local/bin/brew shellenv)"
           arch -x86_64 brew install libomp
@@ -1168,7 +1173,7 @@ jobs:
       - name: Install unixODBC (amd64)
         if: ${{ contains(format(';{0};', inputs.extra_toolchains), ';unixodbc;') && matrix.duckdb_arch == 'osx_amd64' }}
         run: |
-          arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          arch -x86_64 /bin/bash -c "$(curl -fsSL $INTEL_HOMEBREW_INSTALLER)"
           /usr/local/bin/brew config
           /usr/local/bin/brew install unixodbc
           /usr/local/bin/brew ls -v unixodbc
@@ -1888,7 +1893,7 @@ jobs:
       # Inline toolchain setup — skipped when use_prebuilt_wasm_image is true
       # (in that case emsdk + vcpkg + ccache 4.13.6 all come baked in the
       # ghcr.io/.../haybarn-wasm:<tag> image).
-      - uses: mymindstorm/setup-emsdk@v14
+      - uses: emscripten-core/setup-emsdk@v14
         if: ${{ !inputs.use_prebuilt_wasm_image }}
         with:
           version: 5.0.7

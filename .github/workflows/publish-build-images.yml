@@ -20,10 +20,10 @@
 #   :full   — base + Rust + Go + Fortran + parser_tools + unixodbc + multimedia
 #
 # Total: 4 × 3 = 12 images per release. Tagged with the engine version
-# (e.g. v1.5.5) for stable consumer pins, plus :latest as a moving alias.
+# (e.g. v1.5.6) for stable consumer pins, plus :latest as a moving alias.
 #
-# Naming: ghcr.io/query-farm-haybarn/haybarn-<arch><-variant>:v1.5.5
-#   e.g. ghcr.io/query-farm-haybarn/haybarn-linux_amd64-rust:v1.5.5
+# Naming: ghcr.io/query-farm-haybarn/haybarn-<arch><-variant>:v1.5.6
+#   e.g. ghcr.io/query-farm-haybarn/haybarn-linux_amd64-rust:v1.5.6
 #
 # Note on the base / no-variant case: we still publish it with an explicit
 # `-base` suffix (rather than no suffix) so the consumer URL is uniform
@@ -43,9 +43,9 @@ on:
   workflow_dispatch:
     inputs:
       engine_version:
-        description: 'Engine version tag (becomes the image tag, e.g. v1.5.5)'
+        description: 'Engine version tag (becomes the image tag, e.g. v1.5.6)'
         type: string
-        default: 'v1.5.5'
+        default: 'v1.5.6'
       vcpkg_commit:
         description: 'vcpkg commit to bake into the images'
         type: string
@@ -62,9 +62,9 @@ on:
 
 env:
   # The vcpkg pin baked into the images — verified identical to the commit
-  # upstream DuckDB pins for the v1.5.5 engine series (unchanged since v1.5.4).
+  # upstream DuckDB pins for the v1.5.6 engine series (unchanged since v1.5.4).
   # Override via workflow_dispatch inputs.
-  HAYBARN_ENGINE_VERSION: ${{ inputs.engine_version || 'v1.5.5' }}
+  HAYBARN_ENGINE_VERSION: ${{ inputs.engine_version || 'v1.5.6' }}
   HAYBARN_VCPKG_COMMIT:   ${{ inputs.vcpkg_commit   || '84bab45d415d22042bd0b9081aea57f362da3f35' }}
 
 jobs:

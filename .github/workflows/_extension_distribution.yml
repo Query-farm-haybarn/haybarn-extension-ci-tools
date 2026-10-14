@@ -1707,6 +1707,14 @@ jobs:
       USE_MERGED_VCPKG_MANIFEST: ${{ inputs.use_merged_vcpkg_manifest }}
       VCPKG_OVERLAY_PORTS: ${{ github.workspace }}/extension-ci-tools/vcpkg_ports
       VCPKG_OVERLAY_TRIPLETS: ${{ github.workspace }}/extension-ci-tools/toolchains
+      # Haybarn: emscripten 6.0.6 stopped linking libc++ when the link is driven
+      # by `emcc` rather than `em++`. C dependencies that pull in a C++ static
+      # library (avro-c's tools against libsnappy.a) then fail with undefined
+      # `operator new`/`__cxa_guard_*`. Restore the pre-6 default for every
+      # emcc invocation in the build, dependencies included. The -Wno flag keeps
+      # compile-only calls quiet (emcc warns that the link setting is unused
+      # there, which is fatal for dependencies that build with -Werror).
+      EMCC_CFLAGS: -sDEFAULT_TO_CXX -Wno-unused-command-line-argument
       # VCPKG caching
       AWS_ACCESS_KEY_ID: ${{ secrets.VCPKG_CACHING_AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.VCPKG_CACHING_AWS_SECRET_ACCESS_KEY }}
@@ -2045,6 +2053,9 @@ jobs:
           ENABLE_EXTENSION_AUTOINSTALL=1
           ENABLE_EXTENSION_AUTOLOADING=1
           WASM_EXTENSIONS=1
+          # Haybarn: see EMCC_CFLAGS in the job env — the container only sees
+          # vars listed here.
+          EMCC_CFLAGS=-sDEFAULT_TO_CXX -Wno-unused-command-line-argument
           # Haybarn: forward USE_MERGED_VCPKG_MANIFEST into the container so
           # the in-container make picks up the merged vcpkg manifest produced
           # by extension_configuration_wasm (rather than dropping back to the

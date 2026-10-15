@@ -225,7 +225,7 @@ jobs:
             pkg=$(python3 -c "import json; print(json.load(open('$d/package.json'))['name'])")
             ver=$(python3 -c "import json; print(json.load(open('$d/package.json'))['version'])")
             err=$(mktemp)
-            if (cd "$d" && npm publish --provenance --access public --tag latest 2>"$err"); then
+            if (cd "$d" && "$GITHUB_WORKSPACE/ci-tools/scripts/publish/npm-publish-retry.sh" 2>"$err"); then
               echo "OK   $pkg@$ver"
             elif grep -qiE 'previously published|EPUBLISHCONFLICT|cannot publish over' "$err"; then
               echo "SKIP $pkg@$ver"
@@ -259,7 +259,7 @@ jobs:
             pkg=$(python3 -c "import json; print(json.load(open('$d/package.json'))['name'])")
             ver=$(python3 -c "import json; print(json.load(open('$d/package.json'))['version'])")
             err=$(mktemp)
-            if (cd "$d" && npm publish --provenance --access public --tag latest 2>"$err"); then
+            if (cd "$d" && "$GITHUB_WORKSPACE/ci-tools/scripts/publish/npm-publish-retry.sh" 2>"$err"); then
               echo "OK   $pkg@$ver"
             elif grep -qiE 'previously published|EPUBLISHCONFLICT|cannot publish over' "$err"; then
               echo "SKIP $pkg@$ver"
@@ -376,7 +376,7 @@ jobs:
             pkg=$(python3 -c "import json; print(json.load(open('$d/package.json'))['name'])")
             ver=$(python3 -c "import json; print(json.load(open('$d/package.json'))['version'])")
             err=$(mktemp)
-            if (cd "$d" && npm publish --provenance --access public --tag latest 2>"$err"); then
+            if (cd "$d" && "$GITHUB_WORKSPACE/ci-tools/scripts/publish/npm-publish-retry.sh" 2>"$err"); then
               echo "OK   $pkg@$ver"
             elif grep -qiE 'previously published|EPUBLISHCONFLICT|cannot publish over' "$err"; then
               echo "SKIP $pkg@$ver"
@@ -453,7 +453,7 @@ jobs:
           python3 ci-tools/scripts/publish/npm_build_meta.py
           cat "$STAGE/package.json"
           echo "::notice::publishing $META_PKG @ $VERSION"
-          if ! (cd "$STAGE" && npm publish --provenance --access public --tag latest 2>/tmp/npm-meta.err); then
+          if ! (cd "$STAGE" && "$GITHUB_WORKSPACE/ci-tools/scripts/publish/npm-publish-retry.sh" 2>/tmp/npm-meta.err); then
             if grep -qiE 'previously published|EPUBLISHCONFLICT|cannot publish over' /tmp/npm-meta.err; then
               echo "::notice::$META_PKG@$VERSION already published — skipping"
             else

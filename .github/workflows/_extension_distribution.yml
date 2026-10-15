@@ -638,6 +638,10 @@ jobs:
         run: |
           ./extension-ci-tools/scripts/with-retry.sh docker pull "${IMAGE_REF}"
           docker tag "${IMAGE_REF}" "duckdb/${{ matrix.duckdb_arch }}"
+          # Honour a per-extension vcpkg_commit (the image bakes the default).
+          ./extension-ci-tools/scripts/with-retry.sh \
+            ./extension-ci-tools/scripts/repin-vcpkg-in-image.sh \
+              "duckdb/${{ matrix.duckdb_arch }}" '${{ inputs.vcpkg_url }}' '${{ inputs.vcpkg_commit }}'
 
       - name: Build Docker image
         if: ${{ !inputs.use_prebuilt_images }}
@@ -2014,7 +2018,12 @@ jobs:
         env:
           IMAGE_REF: ${{ steps.wasm_image.outputs.ref }}
           RETRY_NON_RETRYABLE: 'manifest unknown|manifest for .* not found|not found|denied|unauthorized|invalid reference format'
-        run: ./extension-ci-tools/scripts/with-retry.sh docker pull "${IMAGE_REF}"
+        run: |
+          ./extension-ci-tools/scripts/with-retry.sh docker pull "${IMAGE_REF}"
+          # Honour a per-extension vcpkg_commit (the image bakes the default).
+          ./extension-ci-tools/scripts/with-retry.sh \
+            ./extension-ci-tools/scripts/repin-vcpkg-in-image.sh \
+              "${IMAGE_REF}" '${{ inputs.vcpkg_url }}' '${{ inputs.vcpkg_commit }}'
 
       - name: Prepare ccache_dir + docker env file (wasm Docker path)
         if: ${{ inputs.use_prebuilt_wasm_image }}

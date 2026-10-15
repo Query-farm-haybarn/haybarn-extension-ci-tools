@@ -51,6 +51,35 @@ HAYBARN_ICON_URL = (
     "haybarn/profile/assets/haybarn-icon.png"
 )
 HAYBARN_REPO_URL = "https://github.com/Query-farm-haybarn/haybarn"
+HAYBARN_SITE_URL = "https://query.farm/products/haybarn/"
+HAYBARN_EXT_INSTALL_URL = "https://query.farm/products/haybarn/extensions/install"
+# Query.Farm wordmark from the site's media kit (dark text, for npm's light UI).
+QUERY_FARM_URL = "https://query.farm"
+QUERY_FARM_WORDMARK_URL = "https://query.farm/media-kit/logo/wordmark-light.png"
+# One-paragraph "what is Haybarn" lead shared by every README, so a reader
+# landing on any package page learns what Haybarn is before what the
+# package is. Mirrors the query.farm/products/haybarn description.
+HAYBARN_INTRO = (
+    f"**[Haybarn]({HAYBARN_SITE_URL})** is a derived distribution of DuckDB "
+    f"from [Query.Farm]({QUERY_FARM_URL}): the same SQL, APIs and database "
+    "files, with signed releases, rebuilt and signed extensions, engine "
+    "improvements, and supply-chain review built in."
+)
+
+
+def branded_header(icon_size: int) -> list:
+    """Haybarn icon + Query.Farm wordmark, centred, both linked."""
+    return [
+        '<p align="center">',
+        f'  <a href="{HAYBARN_SITE_URL}"><img src="{HAYBARN_ICON_URL}" '
+        f'alt="Haybarn" width="{icon_size}" height="{icon_size}"></a>',
+        '</p>',
+        '<p align="center">',
+        f'  <a href="{QUERY_FARM_URL}"><img src="{QUERY_FARM_WORDMARK_URL}" '
+        'alt="Query.Farm" height="28"></a>',
+        '</p>',
+        '',
+    ]
 HAYBARN_COMMUNITY_REPO_URL = (
     "https://github.com/Query-farm-haybarn/haybarn-community-extensions"
 )
@@ -73,15 +102,18 @@ def render_leaf_readme(
     if host_libc != "-":
         plat += f" ({host_libc})"
 
-    parts = [
-        f'<p align="center">',
-        f'  <img src="{HAYBARN_ICON_URL}" alt="Haybarn" width="96" height="96">',
-        f"</p>",
-        "",
+    meta_link = f"[`{meta_pkg}`](https://www.npmjs.com/package/{meta_pkg})"
+    parts = branded_header(96) + [
         f"# `{pkg}`",
         "",
-        f"Platform-specific binary for the **{extension}** extension on **{plat}**, "
-        f"built against [Haybarn]({HAYBARN_REPO_URL}) **{haybarn_version}**.",
+        f"> **Part of {meta_link}** — install that package, not this one.",
+        "",
+        HAYBARN_INTRO,
+        "",
+        f"This is the **{plat}** binary for the **`{extension}`** extension, "
+        f"built against Haybarn **{haybarn_version}**. npm installs it "
+        f"automatically as an optional dependency of {meta_link} on matching "
+        "platforms.",
         "",
     ]
     if ext_source_repo:
@@ -101,7 +133,9 @@ def render_leaf_readme(
         "",
         "## Links",
         "",
-        f"- [Haybarn]({HAYBARN_REPO_URL}) — the engine",
+        f"- {meta_link} — the parent package for this extension",
+        f"- [Haybarn]({HAYBARN_SITE_URL}) — what Haybarn is and how to install it",
+        f"- [Haybarn engine source]({HAYBARN_REPO_URL})",
     ]
     if is_community:
         parts.append(
@@ -132,16 +166,18 @@ def render_wasm_leaf_readme(
     """README for a WebAssembly leaf — npm can't auto-select it (no wasm
     os/cpu), so this is installed explicitly and pointed at by duckdb-wasm."""
     bin_path = f"{pkg}/bin/{extension}.duckdb_extension.wasm"
-    parts = [
-        '<p align="center">',
-        f'  <img src="{HAYBARN_ICON_URL}" alt="Haybarn" width="96" height="96">',
-        "</p>",
-        "",
+    meta_link = f"[`{meta_pkg}`](https://www.npmjs.com/package/{meta_pkg})"
+    parts = branded_header(96) + [
         f"# `{pkg}`",
         "",
-        f"WebAssembly (**{variant}**) build of the **{extension}** extension, built "
-        f"against [Haybarn]({HAYBARN_REPO_URL}) **{haybarn_version}** for use with "
-        f"[duckdb-wasm](https://github.com/duckdb/duckdb-wasm).",
+        f"> **Part of {meta_link}** — the `{extension}` extension's parent package.",
+        "",
+        HAYBARN_INTRO,
+        "",
+        f"This is the WebAssembly (**{variant}**) build of the **`{extension}`** "
+        f"extension, built against Haybarn **{haybarn_version}** for use with "
+        "[Haybarn-Wasm](https://www.npmjs.com/package/@haybarn/haybarn-wasm) / "
+        "duckdb-wasm.",
         "",
     ]
     if ext_source_repo:
@@ -179,7 +215,12 @@ def render_wasm_leaf_readme(
         "See the [duckdb-wasm docs](https://github.com/duckdb/duckdb-wasm).",
         "",
         f"For automatic, native (non-wasm) installs use the meta-package "
-        f"[`{meta_pkg}`](https://www.npmjs.com/package/{meta_pkg}).",
+        f"{meta_link}.",
+        "",
+        "## Links",
+        "",
+        f"- {meta_link} — the parent package for this extension",
+        f"- [Haybarn]({HAYBARN_SITE_URL}) — what Haybarn is and how to install it",
         "",
         "## Trademark",
         "",

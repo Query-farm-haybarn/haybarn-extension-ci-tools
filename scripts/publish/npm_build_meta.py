@@ -49,6 +49,35 @@ HAYBARN_ICON_URL = (
     "haybarn/profile/assets/haybarn-icon.png"
 )
 HAYBARN_REPO_URL = "https://github.com/Query-farm-haybarn/haybarn"
+HAYBARN_SITE_URL = "https://query.farm/products/haybarn/"
+HAYBARN_EXT_INSTALL_URL = "https://query.farm/products/haybarn/extensions/install"
+# Query.Farm wordmark from the site's media kit (dark text, for npm's light UI).
+QUERY_FARM_URL = "https://query.farm"
+QUERY_FARM_WORDMARK_URL = "https://query.farm/media-kit/logo/wordmark-light.png"
+# One-paragraph "what is Haybarn" lead shared by every README, so a reader
+# landing on any package page learns what Haybarn is before what the
+# package is. Mirrors the query.farm/products/haybarn description.
+HAYBARN_INTRO = (
+    f"**[Haybarn]({HAYBARN_SITE_URL})** is a derived distribution of DuckDB "
+    f"from [Query.Farm]({QUERY_FARM_URL}): the same SQL, APIs and database "
+    "files, with signed releases, rebuilt and signed extensions, engine "
+    "improvements, and supply-chain review built in."
+)
+
+
+def branded_header(icon_size: int) -> list:
+    """Haybarn icon + Query.Farm wordmark, centred, both linked."""
+    return [
+        '<p align="center">',
+        f'  <a href="{HAYBARN_SITE_URL}"><img src="{HAYBARN_ICON_URL}" '
+        f'alt="Haybarn" width="{icon_size}" height="{icon_size}"></a>',
+        '</p>',
+        '<p align="center">',
+        f'  <a href="{QUERY_FARM_URL}"><img src="{QUERY_FARM_WORDMARK_URL}" '
+        'alt="Query.Farm" height="28"></a>',
+        '</p>',
+        '',
+    ]
 HAYBARN_COMMUNITY_REPO_URL = (
     "https://github.com/Query-farm-haybarn/haybarn-community-extensions"
 )
@@ -79,19 +108,21 @@ def render_meta_readme(
         for slug in present_leaves
     ) or "_(no platform leaves were built this run)_"
 
-    parts = [
-        '<p align="center">',
-        f'  <img src="{HAYBARN_ICON_URL}" alt="Haybarn" width="120" height="120">',
-        '</p>',
+    parts = branded_header(120) + [
+        f"# `{extension}` — a Haybarn extension",
         '',
-        f"# Haybarn extension: `{extension}`",
+        HAYBARN_INTRO,
         '',
-        extension_description or
-        f"The `{extension}` extension for Haybarn — built and signed against "
-        f"Haybarn {haybarn_version}, distributed on npm as a single meta-package "
-        f"that resolves to the correct per-platform binary at install time.",
+        f"This package delivers the **`{extension}`** "
+        f"{'community ' if is_community else ''}extension for Haybarn "
+        f"{haybarn_version}: built from upstream source, compiled against the "
+        "Haybarn engine and signed with the Haybarn key. It is a single "
+        "meta-package that resolves to the correct per-platform binary at "
+        "install time.",
         '',
     ]
+    if extension_description:
+        parts += [f"> {extension_description}", '']
     # Hoist source + catalog links high — these are the entry points readers
     # actually want, not the install snippet.
     if ext_source_repo:
@@ -175,6 +206,13 @@ def render_meta_readme(
         '',
         (f"The `{extension}` extension is distributed under **{license_id}**. "
          "The Haybarn engine itself is MIT-licensed."),
+        '',
+        '## Links',
+        '',
+        f"- [Haybarn]({HAYBARN_SITE_URL}) — what Haybarn is and how to install it",
+        f"- [Installing extensions]({HAYBARN_EXT_INSTALL_URL}) — core and "
+        "community extension channels",
+        f"- [Haybarn engine source]({HAYBARN_REPO_URL})",
         '',
         '## Trademark',
         '',

@@ -664,6 +664,18 @@ jobs:
             ccache-extension-distribution-${{ matrix.duckdb_arch }}-
           save: ${{ inputs.save_cache }}
 
+      # Haybarn: ccache-action installs ccache 4.9.1 here, whose HTTP backend
+      # silently fails bearer-token uploads, so the shared R2 cache would never
+      # warm; put the upstream 4.13.6 release ahead of it on PATH.
+      - name: Setup / Ccache 4.13.6
+        shell: bash
+        run: |
+          CCACHE_VERSION=4.13.6
+          curl -fsSL "https://github.com/ccache/ccache/releases/download/v${CCACHE_VERSION}/ccache-${CCACHE_VERSION}-windows-x86_64.zip" -o "$RUNNER_TEMP/ccache.zip"
+          unzip -j -o "$RUNNER_TEMP/ccache.zip" "ccache-${CCACHE_VERSION}-windows-x86_64/ccache.exe" -d "$RUNNER_TEMP/ccache-bin"
+          cygpath -w "$RUNNER_TEMP/ccache-bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/ccache-bin/ccache.exe" --version | head -1
+
       - name: Setup / Rtools
         if: ${{ matrix.duckdb_arch == 'windows_amd64_rtools' || matrix.duckdb_arch == 'windows_amd64_mingw' }}
         uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2.12.1
@@ -837,6 +849,18 @@ jobs:
             extension-distribution-${{ matrix.duckdb_arch }}-
             ccache-extension-distribution-${{ matrix.duckdb_arch }}-
           save: ${{ inputs.save_cache }}
+
+      # Haybarn: as on Windows, ccache-action's apt ccache (4.9.1) cannot upload
+      # to the bearer-token R2 cache; use the upstream 4.13.6 static binary.
+      - name: Setup / Ccache 4.13.6
+        shell: bash
+        run: |
+          CCACHE_VERSION=4.13.6
+          curl -fsSL "https://github.com/ccache/ccache/releases/download/v${CCACHE_VERSION}/ccache-${CCACHE_VERSION}-linux-x86_64-musl-static.tar.xz" -o "$RUNNER_TEMP/ccache.tar.xz"
+          mkdir -p "$RUNNER_TEMP/ccache-bin"
+          tar -xJf "$RUNNER_TEMP/ccache.tar.xz" -C "$RUNNER_TEMP/ccache-bin" --strip-components=1 "ccache-${CCACHE_VERSION}-linux-x86_64-musl-static/ccache"
+          echo "$RUNNER_TEMP/ccache-bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/ccache-bin/ccache" --version | head -1
 
       - name: Setup
         run: python3 extension-ci-tools/scripts/ci_phase.py setup

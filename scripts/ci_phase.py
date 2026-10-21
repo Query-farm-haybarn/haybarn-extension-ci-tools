@@ -242,6 +242,9 @@ class PhaseRunner:
                 [
                     "git",
                     "clone",
+                    # Haybarn: blobless - every commit and tag (git describe still
+                    # works) but only the checked-out tree's file contents.
+                    "--filter=blob:none",
                     duckdb_repository or DEFAULT_DUCKDB_GIT_REPOSITORY,
                     "duckdb",
                 ]

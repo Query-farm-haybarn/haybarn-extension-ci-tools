@@ -334,7 +334,7 @@ class CIPhaseTest(unittest.TestCase):
             self.assertEqual(
                 commands,
                 [
-                    ["git", "clone", "duckdb/duckdb-fork", "duckdb"],
+                    ["git", "clone", "--filter=blob:none", "duckdb/duckdb-fork", "duckdb"],
                     ["git", "-C", "duckdb", "fetch", "origin", "v1.2.3"],
                     ["git", "-C", "duckdb", "checkout", "v1.2.3"],
                     ["git", "tag", "v2.0.0"],
@@ -371,6 +371,7 @@ class CIPhaseTest(unittest.TestCase):
                     [
                         "git",
                         "clone",
+                        "--filter=blob:none",
                         "https://github.com/Query-farm-haybarn/haybarn.git",
                         "duckdb",
                     ],

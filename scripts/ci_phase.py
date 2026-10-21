@@ -44,6 +44,19 @@ PREBUILT_DUCKDB_ARTIFACTS = {
 PREBUILT_DUCKDB_USER_AGENT = "haybarn-extension-ci-tools/prebuilt-duckdb"
 # Haybarn: the engine extensions build against when the caller names none.
 DEFAULT_DUCKDB_GIT_REPOSITORY = "https://github.com/Query-farm-haybarn/haybarn.git"
+# Haybarn: prebuilt Linux build images (haybarn-ci) per-extension builds pull
+# instead of building docker/<arch> inline, when they cover the job's toolchains.
+HAYBARN_IMAGE_REGISTRY = "ghcr.io/query-farm-haybarn/haybarn-ci"
+# vcpkg commit and repository baked into those images.
+HAYBARN_IMAGE_VCPKG_COMMIT = "cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3"
+HAYBARN_IMAGE_VCPKG_URL = "https://github.com/microsoft/vcpkg.git"
+# Toolchains every image provides, then each image variant's extras, smallest first.
+HAYBARN_IMAGE_BASE_TOOLCHAINS = {"parser_tools", "unixodbc", "python3"}
+HAYBARN_IMAGE_VARIANTS = (
+    ("main", set()),
+    ("rust", {"rust"}),
+    ("full", {"rust", "go", "fortran", "multimedia"}),
+)
 # Haybarn engine release tags: haybarn-vX.Y.Z or haybarn-vX.Y.Z-rcN.
 HAYBARN_ENGINE_TAG_PATTERN = re.compile(r"^haybarn-(v[0-9]+\.[0-9]+\.[0-9]+)(-rc[0-9]+)?$")
 STAGED_DUCKDB_VERSION_PATTERN = re.compile(
@@ -688,6 +701,9 @@ class PhaseRunner:
             f"{self.workspace}:/duckdb_build_dir",
             "-v",
             f"{self.workspace / '.ccache'}:/ccache_dir",
+            # Haybarn: explicit, since the prebuilt images use other WORKDIRs.
+            "-w",
+            "/duckdb_build_dir",
             f"duckdb/{self.architecture}",
         ]
 
@@ -723,6 +739,11 @@ class PhaseRunner:
             "CCACHE_MAXSIZE": "5G",
             "SUBSET_EXTENSIONS_TESTS": self.value("CI_EXTENSIONS_TEST_SELECTION"),
             "DUCKDB_PREBUILT_EXTENSIONS": self.value("DUCKDB_PREBUILT_EXTENSIONS"),
+            # Haybarn: the prebuilt images default to clang and /ccache; keep the GCC
+            # that upstream's per-extension images compile with, and the mounted cache.
+            "CC": "gcc",
+            "CXX": "g++",
+            "CCACHE_DIR": "/ccache_dir",
             # Haybarn: engine version, test-time haybarn-cli and the vcpkg asset cache.
             "OVERRIDE_GIT_DESCRIBE": self.value("OVERRIDE_GIT_DESCRIBE"),
             "DUCKDB_TEST_VERSION": self.value("DUCKDB_TEST_VERSION"),
@@ -742,6 +763,28 @@ class PhaseRunner:
                     raise ValueError(f"Docker environment value {key} contains a newline")
                 handle.write(f"{key}={value}\n")
 
+    def prebuilt_linux_image(self) -> str:
+        """The haybarn-ci image covering this job, or "" to build docker/<arch> inline."""
+        version = self.value("CI_LINUX_IMAGE_VERSION")
+        if not version:
+            return ""
+        if (
+            self.value("CI_VCPKG_COMMIT") != HAYBARN_IMAGE_VCPKG_COMMIT
+            or self.value("CI_VCPKG_URL").rstrip("/") != HAYBARN_IMAGE_VCPKG_URL
+        ):
+            print("vcpkg differs from the prebuilt images' vcpkg; building the image inline.", flush=True)
+            return ""
+        wanted = {tool for tool in self.value("CI_EXTRA_TOOLCHAINS").split(";") if tool}
+        wanted -= HAYBARN_IMAGE_BASE_TOOLCHAINS
+        variant = next((name for name, tools in HAYBARN_IMAGE_VARIANTS if wanted <= tools), "")
+        if not variant:
+            print(f"No prebuilt image provides {sorted(wanted)}; building the image inline.", flush=True)
+            return ""
+        host = "aarch64" if self.architecture.startswith("linux_arm64") else "amd64"
+        distro = "alpine_3_22" if self.architecture.endswith("_musl") else "manylinux_2_28"
+        registry = self.value("CI_LINUX_IMAGE_REGISTRY", HAYBARN_IMAGE_REGISTRY).rstrip("/")
+        return f"{registry}/{distro}_{host}_{variant}:{version}"
+
     def build_linux(self) -> None:
         if self.enabled("CI_LINUX_NATIVE_CONTAINER"):
             self.run_with_retry(
@@ -749,6 +792,23 @@ class PhaseRunner:
                 extra_env=self.build_environment(),
             )
             return
+        image = self.prebuilt_linux_image()
+        if image:
+            print(f"Using prebuilt build image {image}", flush=True)
+            self.run_with_retry(["docker", "pull", image])
+            self.run(["docker", "tag", image, f"duckdb/{self.architecture}"])
+        else:
+            self.build_linux_image()
+        self.create_docker_environment()
+        self.install_extra_vcpkg_dependencies(docker=True)
+        docker = self.docker_arguments()
+        self.run_with_retry([*docker, "make", "configure_ci", *self.make_overrides()])
+        self.run_with_retry([*docker, "make", self.required("CI_BUILD_TYPE")])
+        post_build = self.value("CI_POST_BUILD_COMMAND")
+        if post_build:
+            self.run(post_build, shell=True, extra_env={"MATRIX_RUNNER": self.value("CI_MATRIX_RUNNER")})
+
+    def build_linux_image(self) -> None:
         self.run(
             [
                 "docker",
@@ -766,14 +826,6 @@ class PhaseRunner:
                 str(self.workspace / "extension-ci-tools" / "docker" / self.architecture),
             ]
         )
-        self.create_docker_environment()
-        self.install_extra_vcpkg_dependencies(docker=True)
-        docker = self.docker_arguments()
-        self.run_with_retry([*docker, "make", "configure_ci", *self.make_overrides()])
-        self.run_with_retry([*docker, "make", self.required("CI_BUILD_TYPE")])
-        post_build = self.value("CI_POST_BUILD_COMMAND")
-        if post_build:
-            self.run(post_build, shell=True, extra_env={"MATRIX_RUNNER": self.value("CI_MATRIX_RUNNER")})
 
     def build_macos(self) -> None:
         self.run(["make", self.required("CI_BUILD_TYPE")], extra_env=self.build_environment())

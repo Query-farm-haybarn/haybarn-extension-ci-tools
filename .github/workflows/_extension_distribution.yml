@@ -234,6 +234,11 @@ on:
         required: false
         type: string
         default: ''
+      haybarn_image_version:
+        description: haybarn-ci build image tag that Linux jobs pull instead of building docker/<arch> when it covers the job's toolchains and vcpkg; empty always builds inline
+        required: false
+        type: string
+        default: 20261021-e0ad82dd
       use_prebuilt_images:
         required: false
         type: boolean
@@ -282,6 +287,7 @@ env:
   CI_VCPKG_EXTRA_DEPENDENCIES: ${{ inputs.vcpkg_extra_dependencies }}
   CI_VCPKG_URL: ${{ inputs.vcpkg_url }}
   CI_VCPKG_COMMIT: ${{ inputs.vcpkg_commit }}
+  CI_LINUX_IMAGE_VERSION: ${{ inputs.haybarn_image_version }}
   CI_VCPKG_OVERLAY_PORTS: ${{ inputs.vcpkg_overlay_ports }}
   CI_VCPKG_OVERLAY_TRIPLETS: ${{ inputs.vcpkg_overlay_triplets }}
   CI_CUDA_ARCHS: ${{ inputs.cuda_archs }}

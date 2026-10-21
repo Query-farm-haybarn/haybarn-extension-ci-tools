@@ -60,6 +60,59 @@ class CIPhaseTest(unittest.TestCase):
             "CI_EXTENSIONS_TEST_SELECTION": "regular",
         }
 
+    def prebuilt_image_environment(self, workspace, architecture="linux_amd64", toolchains=""):
+        env = self.environment(workspace, architecture=architecture)
+        env.update(
+            {
+                "CI_LINUX_IMAGE_VERSION": "20261021-e0ad82dd",
+                "CI_VCPKG_COMMIT": "cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3",
+                "CI_VCPKG_URL": "https://github.com/microsoft/vcpkg.git",
+                "CI_EXTRA_TOOLCHAINS": toolchains,
+            }
+        )
+        return env
+
+    def test_prebuilt_linux_image_selects_the_smallest_covering_variant(self):
+        registry = "ghcr.io/query-farm-haybarn/haybarn-ci"
+        cases = [
+            ("linux_amd64", "", f"{registry}/manylinux_2_28_amd64_main:20261021-e0ad82dd"),
+            ("linux_amd64", ";parser_tools;python3;", f"{registry}/manylinux_2_28_amd64_main:20261021-e0ad82dd"),
+            ("linux_arm64", ";rust;", f"{registry}/manylinux_2_28_aarch64_rust:20261021-e0ad82dd"),
+            ("linux_amd64_musl", ";rust;go;", f"{registry}/alpine_3_22_amd64_full:20261021-e0ad82dd"),
+            ("linux_arm64_musl", ";multimedia;unixodbc;", f"{registry}/alpine_3_22_aarch64_full:20261021-e0ad82dd"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            for architecture, toolchains, expected in cases:
+                with self.subTest(architecture=architecture, toolchains=toolchains):
+                    env = self.prebuilt_image_environment(Path(directory), architecture, toolchains)
+                    self.assertEqual(RecordingRunner(env).prebuilt_linux_image(), expected)
+
+    def test_prebuilt_linux_image_falls_back_to_an_inline_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            uncovered = self.prebuilt_image_environment(workspace, toolchains=";rust;cuda;")
+            self.assertEqual(RecordingRunner(uncovered).prebuilt_linux_image(), "")
+            other_vcpkg = self.prebuilt_image_environment(workspace)
+            other_vcpkg["CI_VCPKG_COMMIT"] = "84bab45d415d22042bd0b9081aea57f362da3f35"
+            self.assertEqual(RecordingRunner(other_vcpkg).prebuilt_linux_image(), "")
+            disabled = self.prebuilt_image_environment(workspace)
+            disabled["CI_LINUX_IMAGE_VERSION"] = ""
+            self.assertEqual(RecordingRunner(disabled).prebuilt_linux_image(), "")
+
+    def test_build_linux_pulls_the_prebuilt_image_instead_of_building_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.prebuilt_image_environment(Path(directory), toolchains=";rust;")
+            runner = RecordingRunner(env)
+            runner.build_linux()
+            commands = [command for command, _ in runner.commands]
+            image = "ghcr.io/query-farm-haybarn/haybarn-ci/manylinux_2_28_amd64_rust:20261021-e0ad82dd"
+            self.assertIn(["docker", "pull", image], commands)
+            self.assertIn(["docker", "tag", image, "duckdb/linux_amd64"], commands)
+            self.assertFalse(any(command[:2] == ["docker", "build"] for command in commands if isinstance(command, list)))
+            docker_env = (Path(directory) / "docker_env.txt").read_text()
+            self.assertIn("CC=gcc\n", docker_env)
+            self.assertIn("CCACHE_DIR=/ccache_dir\n", docker_env)
+
     def test_boolean_and_toolchain_parsing(self):
         self.assertTrue(is_true("true"))
         self.assertTrue(is_true("1"))

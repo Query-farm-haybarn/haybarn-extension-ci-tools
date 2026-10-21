@@ -588,8 +588,8 @@ jobs:
       - name: Setup Emscripten
         uses: emscripten-core/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
         with:
-          # Haybarn: 6.0.12 (upstream 6.0.9), matching haybarn-wasm.
-          version: 6.0.12
+          # Haybarn: 6.0.13 (upstream 6.0.9); keep in step with haybarn-wasm 2.0.
+          version: 6.0.13
       - name: Setup Rust
         if: ${{ matrix.toolchain == 'rust' }}
         uses: dtolnay/rust-toolchain@4d407b29186a635f0cc27475ef0bc0ae605a8866 # 1.86.0

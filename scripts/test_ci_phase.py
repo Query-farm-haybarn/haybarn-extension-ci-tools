@@ -143,6 +143,42 @@ class CIPhaseTest(unittest.TestCase):
             runner = RecordingRunner(self.environment(Path(directory)))
             self.assertEqual(runner.nested_engine_submodule_paths(), [])
 
+    def test_sccache_is_wired_into_rust_docker_builds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            payload = io.BytesIO()
+            with tarfile.open(fileobj=payload, mode="w:gz") as bundle:
+                data = b"#!/bin/sh\n"
+                info = tarfile.TarInfo("sccache-v0.8.2-aarch64-unknown-linux-musl/sccache")
+                info.size = len(data)
+                bundle.addfile(info, io.BytesIO(data))
+            payload.seek(0)
+            env = self.environment(workspace, architecture="linux_arm64")
+            env.update(
+                {
+                    "CI_EXTRA_TOOLCHAINS": ";rust;",
+                    "SCCACHE_WEBDAV_TOKEN": "token",
+                    "SCCACHE_WEBDAV_ENDPOINT": "https://cache.example/sccache/",
+                }
+            )
+            with mock.patch("ci_phase.urllib.request.urlopen", return_value=payload) as urlopen:
+                RecordingRunner(env).create_docker_environment()
+            self.assertIn("sccache-v0.8.2-aarch64-unknown-linux-musl.tar.gz", urlopen.call_args.args[0])
+            self.assertTrue((workspace / ".ci/sccache/sccache").is_file())
+            docker_env = (workspace / "docker_env.txt").read_text()
+            self.assertIn("RUSTC_WRAPPER=/duckdb_build_dir/.ci/sccache/sccache\n", docker_env)
+            self.assertIn("CARGO_INCREMENTAL=0\n", docker_env)
+
+    def test_sccache_is_skipped_without_rust_or_token(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            for toolchains, token in ((";python3;", "token"), (";rust;", "")):
+                env = self.environment(workspace)
+                env.update({"CI_EXTRA_TOOLCHAINS": toolchains, "SCCACHE_WEBDAV_TOKEN": token})
+                with mock.patch("ci_phase.urllib.request.urlopen") as urlopen:
+                    self.assertEqual(RecordingRunner(env).install_sccache(), "")
+                urlopen.assert_not_called()
+
     def test_boolean_and_toolchain_parsing(self):
         self.assertTrue(is_true("true"))
         self.assertTrue(is_true("1"))

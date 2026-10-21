@@ -281,6 +281,10 @@ env:
   CCACHE_NOHASHDIR: "1"
   CCACHE_SLOPPINESS: "time_macros,include_file_mtime,pch_defines"
   CCACHE_COMPILERCHECK: "content"
+  # Haybarn: sccache for Rust in the Linux Docker builds (fetched by ci_phase
+  # when the job uses Rust and the token is set).
+  SCCACHE_WEBDAV_ENDPOINT: https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/sccache/
+  SCCACHE_WEBDAV_TOKEN: ${{ secrets.vcpkg_token }}
   CI_EXTENSION_NAME: ${{ inputs.extension_name }}
   CI_EXTENSION_CANONICAL: ${{ inputs.extension_canonical }}
   DUCKDB_VERSION: ${{ inputs.duckdb_version }}

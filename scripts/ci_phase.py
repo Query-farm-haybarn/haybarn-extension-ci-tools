@@ -52,6 +52,9 @@ HAYBARN_IMAGE_VCPKG_COMMIT = "cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3"
 HAYBARN_IMAGE_VCPKG_URL = "https://github.com/microsoft/vcpkg.git"
 # Toolchains every image provides, then each image variant's extras, smallest first.
 HAYBARN_IMAGE_BASE_TOOLCHAINS = {"parser_tools", "unixodbc", "python3"}
+# Haybarn: Rust compile cache for Linux Docker builds, on the same Worker/R2 as
+# ccache (sccache/ keyspace). musl-static, so it runs on manylinux and Alpine.
+SCCACHE_VERSION = "0.8.2"
 HAYBARN_IMAGE_VARIANTS = (
     ("main", set()),
     ("rust", {"rust"}),
@@ -755,6 +758,34 @@ class PhaseRunner:
             f"duckdb/{self.architecture}",
         ]
 
+    def install_sccache(self) -> str:
+        """Download sccache into the workspace; return its container path, or "" if unavailable."""
+        if not tool_enabled(self.value("CI_EXTRA_TOOLCHAINS"), "rust") or not self.value("SCCACHE_WEBDAV_TOKEN"):
+            return ""
+        host = "aarch64" if self.architecture.startswith("linux_arm64") else "x86_64"
+        name = f"sccache-v{SCCACHE_VERSION}-{host}-unknown-linux-musl"
+        url = f"https://github.com/mozilla/sccache/releases/download/v{SCCACHE_VERSION}/{name}.tar.gz"
+        destination = self.workspace / ".ci" / "sccache"
+        destination.mkdir(parents=True, exist_ok=True)
+        try:
+            with urllib.request.urlopen(url, timeout=60) as response:
+                with tarfile.open(fileobj=response, mode="r|gz") as bundle:
+                    for member in bundle:
+                        if member.isfile() and member.name == f"{name}/sccache":
+                            source = bundle.extractfile(member)
+                            assert source is not None
+                            with (destination / "sccache").open("wb") as target:
+                                shutil.copyfileobj(source, target)
+                            break
+        except (OSError, urllib.error.URLError, tarfile.TarError) as error:
+            print(f"sccache is unavailable; building Rust without it ({url}: {error}).", flush=True)
+            return ""
+        if not (destination / "sccache").is_file():
+            print(f"sccache binary not found in {url}; building Rust without it.", flush=True)
+            return ""
+        (destination / "sccache").chmod(0o755)
+        return "/duckdb_build_dir/.ci/sccache/sccache"
+
     def create_docker_environment(self) -> None:
         values = {
             "VCPKG_BINARY_SOURCES": self.value("VCPKG_BINARY_SOURCES"),
@@ -804,6 +835,17 @@ class PhaseRunner:
             "X_VCPKG_ASSET_SOURCES": self.value("X_VCPKG_ASSET_SOURCES"),
         }
         values.update(test_environment(self.value("CI_TEST_CONFIG", "{}")))
+        sccache = self.install_sccache()
+        if sccache:
+            # Haybarn: sccache and cargo's incremental mode are mutually exclusive.
+            values.update(
+                {
+                    "RUSTC_WRAPPER": sccache,
+                    "SCCACHE_WEBDAV_ENDPOINT": self.value("SCCACHE_WEBDAV_ENDPOINT"),
+                    "SCCACHE_WEBDAV_TOKEN": self.value("SCCACHE_WEBDAV_TOKEN"),
+                    "CARGO_INCREMENTAL": "0",
+                }
+            )
         prebuilt_library = self.value("DUCKDB_PREBUILT_LIBRARY")
         if prebuilt_library:
             relative_library = Path(prebuilt_library).resolve().relative_to(

@@ -81,7 +81,7 @@ on:
         description: haybarn-ci container image version
         required: false
         type: string
-        default: v2.0.0
+        default: 20261021-824906a5 # haybarn-ci haybarn-images run 39626265533 (alias v2.0.0)
       skip_tests:
         description: Skip tests
         required: false
@@ -219,7 +219,7 @@ jobs:
           echo "commit=${duckdb_commit}" >> "$GITHUB_OUTPUT"
       - name: Compute matrix
         id: matrix
-        uses: Query-farm-haybarn/haybarn-ci/matrix@eb2e54b4fc9e2ee00a3f67cfa168497293b26ae6 # haybarn
+        uses: Query-farm-haybarn/haybarn-ci/matrix@824906a5bdbfb6204d1e2c5e0036a4bab8d5800d # haybarn
         with:
           exclude_archs: ${{ inputs.exclude_archs }}
           opt_in_archs: ${{ inputs.opt_in_archs }}
@@ -265,7 +265,7 @@ jobs:
       CI_PREBUILT_DUCKDB_PATH: ${{ github.workspace }}/.ci/prebuilt-duckdb/${{ matrix.duckdb_arch }}
     steps:
       - name: Prepare sources
-        uses: &duckdb-ci-prepare-extension Query-farm-haybarn/haybarn-ci/prepare-extension@eb2e54b4fc9e2ee00a3f67cfa168497293b26ae6 # haybarn
+        uses: &duckdb-ci-prepare-extension Query-farm-haybarn/haybarn-ci/prepare-extension@824906a5bdbfb6204d1e2c5e0036a4bab8d5800d # haybarn
         with:
           extension-repository: ${{ inputs.extension_repository != '' && inputs.extension_repository || github.repository }}
           extension-ref: ${{ inputs.extension_ref }}
@@ -300,7 +300,7 @@ jobs:
       - name: Configure
         run: python3 extension-ci-tools/scripts/ci_phase.py setup
       - name: Build
-        uses: &duckdb-ci-build-duckdb Query-farm-haybarn/haybarn-ci/build-duckdb@eb2e54b4fc9e2ee00a3f67cfa168497293b26ae6 # haybarn
+        uses: &duckdb-ci-build-duckdb Query-farm-haybarn/haybarn-ci/build-duckdb@824906a5bdbfb6204d1e2c5e0036a4bab8d5800d # haybarn
         with:
           build: python3 extension-ci-tools/scripts/ci_phase.py build
           test: python3 extension-ci-tools/scripts/ci_phase.py test

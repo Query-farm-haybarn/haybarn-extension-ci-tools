@@ -20,6 +20,10 @@ on:
         required: false
       VCPKG_CACHING_AWS_DEFAULT_REGION:
         required: false
+      # Haybarn: bearer token for the Haybarn vcpkg binary/asset cache; it is
+      # substituted for {0} in vcpkg_binary_sources.
+      vcpkg_token:
+        required: false
     inputs:
       # The name with which the extension will be built
       extension_name:
@@ -211,9 +215,58 @@ on:
         required: false
         type: string
         default: '13'
+      # Haybarn: vcpkg asset (source tarball) mirror; empty = the Haybarn cache.
+      vcpkg_asset_sources:
+        required: false
+        type: string
+        default: ''
+      # Haybarn: per-step timeout for extension tests.
+      test_timeout_minutes:
+        required: false
+        type: number
+        default: 30
+      # Haybarn 1.5 inputs, accepted so 1.5-era callers keep starting; the 2.0
+      # workflow ignores them. matrix_parse_script was replaced by extbuild.
+      # The prebuilt GHCR images (haybarn-linux_*-<variant>, haybarn-wasm-*)
+      # are not published for 2.0 yet: Linux builds the ci-tools Docker image
+      # inline and wasm installs emsdk on the runner, as upstream does.
+      matrix_parse_script:
+        required: false
+        type: string
+        default: ''
+      use_prebuilt_images:
+        required: false
+        type: boolean
+        default: false
+      image_variant:
+        required: false
+        type: string
+        default: 'base'
+      prebuilt_image_tag:
+        required: false
+        type: string
+        default: ''
+      prebuilt_image_namespace:
+        required: false
+        type: string
+        default: 'query-farm-haybarn'
+      use_prebuilt_wasm_image:
+        required: false
+        type: boolean
+        default: false
+      wasm_image_variant:
+        required: false
+        type: string
+        default: 'base'
 
 env:
-  VCPKG_BINARY_SOURCES: ${{inputs.vcpkg_binary_sources == '' && 'clear;http,https://vcpkg-cache.duckdb.org,read' || inputs.vcpkg_binary_sources }}
+  # Haybarn: default to the Haybarn vcpkg cache (readwrite, Cloudflare Worker
+  # in front of R2). Reads are anonymous; writes need the bearer token, which
+  # replaces {0}. Quoted because the value contains `Authorization: Bearer`.
+  VCPKG_BINARY_SOURCES: "${{ format(inputs.vcpkg_binary_sources == '' && 'clear;http,https://haybarn-vcpkg-cache.rusty-bb6.workers.dev,readwrite,Authorization: Bearer {0}' || inputs.vcpkg_binary_sources, secrets.vcpkg_token) }}"
+  # Haybarn vcpkg asset cache (source-tarball mirror) on the same Worker, under
+  # assets/. x-azurl has no header auth, so the token goes in the query string.
+  X_VCPKG_ASSET_SOURCES: "${{ inputs.vcpkg_asset_sources == '' && format('clear;x-azurl,https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/assets/,auth={0},readwrite', secrets.vcpkg_token) || inputs.vcpkg_asset_sources }}"
   USE_MERGED_VCPKG_MANIFEST: ${{ inputs.use_merged_vcpkg_manifest }}
   USE_DEFAULT_RUNNERS: ${{ inputs.runners == '{}' }}
   CI_EXTENSION_NAME: ${{ inputs.extension_name }}
@@ -374,6 +427,7 @@ jobs:
         run: python3 extension-ci-tools/scripts/ci_phase.py build
 
       - name: Test
+        timeout-minutes: ${{ inputs.test_timeout_minutes }}
         run: python3 extension-ci-tools/scripts/ci_phase.py test
 
       - name: Upload / Prepare artifacts
@@ -482,6 +536,7 @@ jobs:
         run: python3 extension-ci-tools/scripts/ci_phase.py build
 
       - name: Test
+        timeout-minutes: ${{ inputs.test_timeout_minutes }}
         run: python3 extension-ci-tools/scripts/ci_phase.py test
 
       - name: Upload / Prepare artifacts
@@ -626,6 +681,7 @@ jobs:
         run: python extension-ci-tools/scripts/ci_phase.py build
 
       - name: Test
+        timeout-minutes: ${{ inputs.test_timeout_minutes }}
         run: python extension-ci-tools/scripts/ci_phase.py test
 
       - name: Upload / Prepare artifacts
@@ -776,6 +832,7 @@ jobs:
         run: python3 extension-ci-tools/scripts/ci_phase.py build
 
       - name: Test
+        timeout-minutes: ${{ inputs.test_timeout_minutes }}
         run: python3 extension-ci-tools/scripts/ci_phase.py test
 
       - name: Upload / Prepare artifacts

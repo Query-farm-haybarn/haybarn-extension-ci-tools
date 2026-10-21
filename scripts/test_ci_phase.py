@@ -15,6 +15,7 @@ import urllib.error
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from ci_phase import (  # noqa: E402
+    DEFAULT_PREBUILT_DUCKDB_BASE_URL,
     PhaseRunner,
     extra_dependencies,
     format_windows_command,
@@ -519,7 +520,7 @@ class CIPhaseTest(unittest.TestCase):
                 artifact_root,
                 artifact_name,
                 [
-                    ("libduckdb_static.a", b"library"),
+                    ("libhaybarn_static.a", b"library"),
                     ("libduckdb_shell.a", b"shell"),
                     ("libcore_functions_extension.a", b"core functions"),
                     ("nested/libparquet_extension.a", b"parquet"),
@@ -538,7 +539,7 @@ class CIPhaseTest(unittest.TestCase):
             runner = RecordingRunner(env)
             runner.build()
 
-            library = artifact_root / "extracted" / "libduckdb_static.a"
+            library = artifact_root / "extracted" / "libhaybarn_static.a"
             self.assertEqual(library.read_bytes(), b"library")
             self.assertEqual(
                 runner.env["DUCKDB_PREBUILT_LIBRARY"], str(library.resolve())
@@ -582,7 +583,7 @@ class CIPhaseTest(unittest.TestCase):
                 artifact_root,
                 artifact_name,
                 [
-                    ("libduckdb_static.a", b"library"),
+                    ("libhaybarn_static.a", b"library"),
                     ("libduckdb_shell.a", b"shell"),
                     ("libduckdb_httplib.a", b"httplib"),
                     ("libduckdb_loadable_extensions.a", b"loadable extensions"),
@@ -620,7 +621,7 @@ class CIPhaseTest(unittest.TestCase):
                 artifact_root,
                 artifact_name,
                 [
-                    ("duckdb_static.lib", b"library"),
+                    ("haybarn_static.lib", b"library"),
                     ("duckdb_shell.lib", b"shell"),
                     ("core_functions_extension.lib", b"core functions"),
                     ("parquet_extension.lib", b"parquet"),
@@ -637,7 +638,7 @@ class CIPhaseTest(unittest.TestCase):
             runner = RecordingRunner(env)
             runner.prepare_prebuilt_duckdb()
 
-            library = artifact_root / "extracted" / "duckdb_static.lib"
+            library = artifact_root / "extracted" / "haybarn_static.lib"
             self.assertEqual(library.read_bytes(), b"library")
             self.assertEqual(
                 runner.env["DUCKDB_PREBUILT_LIBRARY"], str(library.resolve())
@@ -666,7 +667,7 @@ class CIPhaseTest(unittest.TestCase):
             )
 
             self.create_prebuilt_archive(
-                artifact_root, artifact_name, [("libduckdb_static.a", b"library")]
+                artifact_root, artifact_name, [("libhaybarn_static.a", b"library")]
             )
             with self.assertRaisesRegex(ValueError, "expected one libduckdb_shell.a"):
                 RecordingRunner(env).prepare_prebuilt_duckdb()
@@ -675,13 +676,35 @@ class CIPhaseTest(unittest.TestCase):
                 artifact_root,
                 artifact_name,
                 [
-                    ("libduckdb_static.a", b"library"),
+                    ("libhaybarn_static.a", b"library"),
                     ("libduckdb_shell.a", b"one"),
                     ("nested/libduckdb_shell.a", b"two"),
                 ],
             )
             with self.assertRaisesRegex(ValueError, "expected one libduckdb_shell.a"):
                 RecordingRunner(env).prepare_prebuilt_duckdb()
+
+    def test_prebuilt_duckdb_rejects_upstream_duckdb_library(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            artifact_name = "duckdb-static-libs-linux-amd64.tar.gz"
+            artifact_root = workspace / ".ci" / "prebuilt-duckdb" / "linux_amd64"
+            env = self.environment(workspace)
+            env.update(
+                {
+                    "CI_PREBUILT_DUCKDB_ARTIFACT": artifact_name,
+                    "CI_PREBUILT_DUCKDB_PATH": str(artifact_root),
+                }
+            )
+
+            self.create_prebuilt_archive(
+                artifact_root, artifact_name, [("libduckdb_static.a", b"upstream")]
+            )
+            with self.assertRaisesRegex(ValueError, "expected one libhaybarn_static.a"):
+                RecordingRunner(env).prepare_prebuilt_duckdb()
+
+    def test_prebuilt_duckdb_default_source_is_not_duckdb_staging(self):
+        self.assertNotIn("duckdb.org", DEFAULT_PREBUILT_DUCKDB_BASE_URL)
 
     def test_prebuilt_duckdb_rejects_missing_or_duplicate_library(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -702,13 +725,13 @@ class CIPhaseTest(unittest.TestCase):
             self.create_prebuilt_archive(
                 artifact_root, artifact_name, [("duckdb.h", b"header")]
             )
-            with self.assertRaisesRegex(ValueError, "expected one libduckdb_static.a"):
+            with self.assertRaisesRegex(ValueError, "expected one libhaybarn_static.a"):
                 RecordingRunner(env).prepare_prebuilt_duckdb()
 
             self.create_prebuilt_archive(
                 artifact_root,
                 artifact_name,
-                [("libduckdb_static.a", b"one"), ("nested/libduckdb_static.a", b"two")],
+                [("libhaybarn_static.a", b"one"), ("nested/libhaybarn_static.a", b"two")],
             )
             with self.assertRaisesRegex(ValueError, "found 2"):
                 RecordingRunner(env).prepare_prebuilt_duckdb()
@@ -717,7 +740,7 @@ class CIPhaseTest(unittest.TestCase):
                 artifact_root,
                 artifact_name,
                 [
-                    ("libduckdb_static.a", b"library"),
+                    ("libhaybarn_static.a", b"library"),
                     ("libparquet_extension.a", b"one"),
                     ("nested/libparquet_extension.a", b"two"),
                 ],

@@ -25,7 +25,11 @@ import urllib.request
 
 
 TRUE_VALUES = {"1", "true", "yes", "on"}
-DEFAULT_PREBUILT_DUCKDB_BASE_URL = "https://duckdb-staging.duckdb.org"
+# Haybarn: prebuilt engine archives come from Haybarn's own staging tree, which
+# mirrors upstream's <commit10>/<version>/duckdb/duckdb/github_release/ layout.
+# DuckDB's staging archives are built from different sources with a different
+# trust root, so they must never be linked into a Haybarn extension.
+DEFAULT_PREBUILT_DUCKDB_BASE_URL = "https://haybarn-extensions.query.farm/staging"
 PREBUILT_DUCKDB_ARTIFACTS = {
     "linux_amd64": "duckdb-static-libs-linux-amd64.tar.gz",
     "linux_arm64": "duckdb-static-libs-linux-arm64.tar.gz",
@@ -37,7 +41,7 @@ PREBUILT_DUCKDB_ARTIFACTS = {
     "windows_arm64": "duckdb-static-libs-windows-arm64.tar.gz",
     "windows_amd64_mingw": "duckdb-static-libs-windows-mingw.tar.gz",
 }
-PREBUILT_DUCKDB_USER_AGENT = "duckdb-extension-ci-tools/prebuilt-duckdb"
+PREBUILT_DUCKDB_USER_AGENT = "haybarn-extension-ci-tools/prebuilt-duckdb"
 STAGED_DUCKDB_VERSION_PATTERN = re.compile(
     r"^v[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|rc|dev)[0-9]+)?$"
 )
@@ -548,10 +552,12 @@ class PhaseRunner:
             and self.architecture
             not in {"windows_amd64_mingw", "windows_amd64_rtools"}
         )
+        # Haybarn ships the engine's static library as haybarn_static; requiring
+        # that name also rejects an archive built by upstream DuckDB.
         library_name = (
-            "duckdb_static.lib"
+            "haybarn_static.lib"
             if msvc
-            else "libduckdb_static.a"
+            else "libhaybarn_static.a"
         )
         shell_library_name = "duckdb_shell.lib" if msvc else "libduckdb_shell.a"
         # optional capabilities built as their own archives next to the DuckDB library

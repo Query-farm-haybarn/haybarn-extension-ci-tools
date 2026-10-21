@@ -108,18 +108,41 @@ TEST_RUNNER_BASE=$(TEST_RUNNER) --test-dir test/sql $(EXTRA_EXTENSIONS_PARAM)
 TEST_RUNNER_DEBUG=$(TEST_RUNNER_BASE) --external-extension build/debug/$(EXTENSION_NAME).duckdb_extension
 TEST_RUNNER_RELEASE=$(TEST_RUNNER_BASE) --external-extension build/release/$(EXTENSION_NAME).duckdb_extension
 
-# By default latest duckdb is installed, set DUCKDB_TEST_VERSION to switch to a different version
+# Haybarn: test against the Haybarn engine fork (haybarn-cli on PyPI), not
+# upstream duckdb. haybarn-cli is an ABI-compatible drop-in — it still ships
+# the `duckdb` Python module that duckdb_sqllogictest imports — but its
+# library_version matches the binaries this CI builds, so the engine loader
+# accepts them. All currently-published releases are pre-release (1.5.Xrcn),
+# so --pre is required for pip to consider them. Default is latest; CI pins
+# DUCKDB_TEST_VERSION (e.g. '2.0.0rc1') from the haybarn-v* engine tag.
+#
+# Exception: haybarn-cli does not (yet) publish a win_arm64 wheel — the 1.5.3rc4
+# release only ships {macos arm64/x86_64, manylinux x86_64/aarch64, musllinux
+# x86_64/aarch64, win_amd64}. Fall back to upstream `duckdb` on that arch so
+# tests still run; the OVERRIDE_GIT_DESCRIBE=vX.Y.Z label means the engine
+# loader's library_version check still passes against upstream X.Y.Z. Remove
+# this branch once haybarn-cli ships a win_arm64 wheel.
+ifeq ($(DUCKDB_PLATFORM),windows_arm64)
 DUCKDB_PIP_INSTALL?=duckdb
 ifeq ($(DUCKDB_TEST_VERSION),main)
 	DUCKDB_PIP_INSTALL=--pre duckdb
 else ifneq ($(DUCKDB_TEST_VERSION),)
-	DUCKDB_PIP_INSTALL=duckdb==$(DUCKDB_TEST_VERSION)
+	# a Haybarn rc (e.g. 2.0.0rc1) tests against upstream's final X.Y.Z
+	DUCKDB_PIP_INSTALL=duckdb==$(firstword $(subst rc, ,$(DUCKDB_TEST_VERSION)))
 endif
-
-# This allows C API extensions to be tested against a prerelease of DuckDB. This only really makes sense when DuckDB already
-# has stabilized the C API for the upcoming release.
 ifeq ($(DUCKDB_GIT_VERSION),main)
 	DUCKDB_PIP_INSTALL=--pre duckdb
+endif
+else
+DUCKDB_PIP_INSTALL?=--pre haybarn-cli
+ifeq ($(DUCKDB_TEST_VERSION),main)
+	DUCKDB_PIP_INSTALL=--pre haybarn-cli
+else ifneq ($(DUCKDB_TEST_VERSION),)
+	DUCKDB_PIP_INSTALL=haybarn-cli==$(DUCKDB_TEST_VERSION)
+endif
+ifeq ($(DUCKDB_GIT_VERSION),main)
+	DUCKDB_PIP_INSTALL=--pre haybarn-cli
+endif
 endif
 
 TEST_RELEASE_TARGET=test_extension_release_internal

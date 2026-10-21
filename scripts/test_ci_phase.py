@@ -15,6 +15,7 @@ import urllib.error
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from ci_phase import (  # noqa: E402
+    haybarn_engine_versions,
     DEFAULT_PREBUILT_DUCKDB_BASE_URL,
     PhaseRunner,
     extra_dependencies,
@@ -161,6 +162,52 @@ class CIPhaseTest(unittest.TestCase):
             self.assertIn("DUCKDB_VERSION=v2.0.0-alpha39940\n", docker_environment)
             self.assertIn(f"DUCKDB_COMMIT={commit}\n", docker_environment)
 
+    def test_haybarn_engine_versions(self):
+        self.assertEqual(haybarn_engine_versions("haybarn-v2.0.0"), ("v2.0.0", "2.0.0"))
+        self.assertEqual(haybarn_engine_versions("haybarn-v2.0.0-rc12"), ("v2.0.0", "2.0.0rc12"))
+        self.assertIsNone(haybarn_engine_versions("v2.0.0"))
+        self.assertIsNone(haybarn_engine_versions("haybarn-v2.0.0-rc1-3-gabcdef"))
+        self.assertIsNone(haybarn_engine_versions("0123456789abcdef0123456789abcdef01234567"))
+
+    def test_haybarn_engine_tag_sets_versions_for_build_test_and_docker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(directory)
+            env["DUCKDB_VERSION"] = "haybarn-v2.0.0-rc1"
+            runner = RecordingRunner(env)
+            self.assertEqual(runner.env["OVERRIDE_GIT_DESCRIBE"], "v2.0.0")
+            self.assertEqual(runner.env["DUCKDB_TEST_VERSION"], "2.0.0rc1")
+            self.assertEqual(runner.make_overrides(), ["DUCKDB_TEST_VERSION=2.0.0rc1"])
+
+            runner.create_docker_environment()
+            docker_environment = Path(directory, "docker_env.txt").read_text(encoding="utf-8")
+            self.assertIn("OVERRIDE_GIT_DESCRIBE=v2.0.0\n", docker_environment)
+            self.assertIn("DUCKDB_TEST_VERSION=2.0.0rc1\n", docker_environment)
+
+            runner.commands.clear()
+            runner.env["CI_LINUX_NATIVE_CONTAINER"] = "true"
+            runner.setup_linux()
+            self.assertEqual(runner.commands[0][0][-1], "DUCKDB_TEST_VERSION=2.0.0rc1")
+
+    def test_explicit_versions_win_over_the_engine_tag(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(directory)
+            env.update(
+                {
+                    "DUCKDB_VERSION": "haybarn-v2.0.0-rc1",
+                    "OVERRIDE_GIT_DESCRIBE": "v2.0.1",
+                    "DUCKDB_TEST_VERSION": "2.0.1rc2",
+                }
+            )
+            runner = RecordingRunner(env)
+            self.assertEqual(runner.env["OVERRIDE_GIT_DESCRIBE"], "v2.0.1")
+            self.assertEqual(runner.env["DUCKDB_TEST_VERSION"], "2.0.1rc2")
+
+    def test_non_haybarn_refs_leave_versions_unset(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = RecordingRunner(self.environment(directory))
+            self.assertNotIn("OVERRIDE_GIT_DESCRIBE", runner.env)
+            self.assertEqual(runner.make_overrides(), [])
+
     def test_duckdb_ref_falls_back_to_version(self):
         with tempfile.TemporaryDirectory() as directory:
             runner = RecordingRunner(self.environment(directory))
@@ -220,7 +267,7 @@ class CIPhaseTest(unittest.TestCase):
                     [
                         "git",
                         "clone",
-                        "https://github.com/duckdb/duckdb.git",
+                        "https://github.com/Query-farm-haybarn/haybarn.git",
                         "duckdb",
                     ],
                     ["git", "-C", "duckdb", "fetch", "origin", "v1.2.3"],

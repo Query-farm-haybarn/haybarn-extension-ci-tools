@@ -42,6 +42,10 @@ PREBUILT_DUCKDB_ARTIFACTS = {
     "windows_amd64_mingw": "duckdb-static-libs-windows-mingw.tar.gz",
 }
 PREBUILT_DUCKDB_USER_AGENT = "haybarn-extension-ci-tools/prebuilt-duckdb"
+# Haybarn: the engine extensions build against when the caller names none.
+DEFAULT_DUCKDB_GIT_REPOSITORY = "https://github.com/Query-farm-haybarn/haybarn.git"
+# Haybarn engine release tags: haybarn-vX.Y.Z or haybarn-vX.Y.Z-rcN.
+HAYBARN_ENGINE_TAG_PATTERN = re.compile(r"^haybarn-(v[0-9]+\.[0-9]+\.[0-9]+)(-rc[0-9]+)?$")
 STAGED_DUCKDB_VERSION_PATTERN = re.compile(
     r"^v[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|rc|dev)[0-9]+)?$"
 )
@@ -65,6 +69,21 @@ def format_windows_command(command: Sequence[str]) -> str:
 
 def is_true(value: str | None) -> bool:
     return (value or "").lower() in TRUE_VALUES
+
+
+def haybarn_engine_versions(ref: str) -> tuple[str, str] | None:
+    """Map a Haybarn engine tag to (OVERRIDE_GIT_DESCRIBE, haybarn-cli version).
+
+    A Haybarn engine tagged haybarn-v2.0.0-rc1 reports library_version v2.0.0, so
+    extensions must embed v2.0.0 (DuckDB's CMake does not parse the haybarn- form
+    and would stamp v0.0.1). Their tests run on the haybarn-cli release built
+    from that tag, published to PyPI as 2.0.0rc1.
+    """
+    match = HAYBARN_ENGINE_TAG_PATTERN.fullmatch(ref)
+    if match is None:
+        return None
+    version, release_candidate = match.group(1), match.group(2) or ""
+    return version, version[1:] + release_candidate.replace("-rc", "rc")
 
 
 def tool_enabled(toolchains: str, tool: str) -> bool:
@@ -106,6 +125,12 @@ class PhaseRunner:
         self.platform = self.required("CI_PLATFORM")
         self.architecture = self.required("DUCKDB_PLATFORM")
         self.workspace = Path(self.env.get("GITHUB_WORKSPACE", ".")).resolve()
+        # Haybarn: derive the embedded engine version and the test-time
+        # haybarn-cli from a haybarn-v* engine tag, unless the caller set them.
+        versions = haybarn_engine_versions(self.value("DUCKDB_TAG") or self.value("DUCKDB_VERSION"))
+        if versions is not None:
+            self.env.setdefault("OVERRIDE_GIT_DESCRIBE", versions[0])
+            self.env.setdefault("DUCKDB_TEST_VERSION", versions[1])
 
     def value(self, name: str, default: str = "") -> str:
         return self.env.get(name, default)
@@ -179,6 +204,13 @@ class PhaseRunner:
             with open(destination, "a", encoding="utf-8") as handle:
                 handle.write(f"{value}\n")
 
+    def make_overrides(self) -> list[str]:
+        # Haybarn: extension Makefiles assign DUCKDB_TEST_VERSION themselves
+        # (some with a plain '='), so the test-time haybarn-cli version must be
+        # a make command-line override to win.
+        test_version = self.value("DUCKDB_TEST_VERSION")
+        return [f"DUCKDB_TEST_VERSION={test_version}"] if test_version else []
+
     def retry_prefix(self) -> list[str]:
         retry_script = self.workspace / "duckdb" / "scripts" / "ci" / "retry.py"
         return [sys.executable, str(retry_script), "--"] if retry_script.is_file() else []
@@ -197,7 +229,7 @@ class PhaseRunner:
                 [
                     "git",
                     "clone",
-                    duckdb_repository or "https://github.com/duckdb/duckdb.git",
+                    duckdb_repository or DEFAULT_DUCKDB_GIT_REPOSITORY,
                     "duckdb",
                 ]
             )
@@ -385,7 +417,7 @@ class PhaseRunner:
     def setup_linux(self) -> None:
         if self.enabled("CI_LINUX_NATIVE_CONTAINER"):
             self.run_with_retry(
-                ["make", "configure_ci"],
+                ["make", "configure_ci", *self.make_overrides()],
                 extra_env=self.build_environment(),
             )
             return
@@ -412,7 +444,7 @@ class PhaseRunner:
             self.run("docker info | grep 'Docker Root Dir'", shell=True)
 
         self.run_with_retry(
-            ["make", "configure_ci"],
+            ["make", "configure_ci", *self.make_overrides()],
             extra_env={
                 "DUCKDB_GIT_VERSION": self.duckdb_ref(),
                 "LINUX_CI_IN_DOCKER": "0",
@@ -438,7 +470,7 @@ class PhaseRunner:
             self.run(["curl", "https://awscli.amazonaws.com/AWSCLIV2-2.22.35.pkg", "-o", "AWSCLIV2.pkg"])
             self.run(["sudo", "installer", "-pkg", "AWSCLIV2.pkg", "-target", "/"])
             self.run(["aws", "--version"])
-        self.run(["make", "configure_ci"], extra_env={"DUCKDB_GIT_VERSION": self.duckdb_ref()})
+        self.run(["make", "configure_ci", *self.make_overrides()], extra_env={"DUCKDB_GIT_VERSION": self.duckdb_ref()})
         self.install_extra_vcpkg_dependencies()
 
     def setup_macos_omp(self) -> None:
@@ -497,7 +529,7 @@ class PhaseRunner:
             if zstd.exists():
                 zstd.rename(zstd.with_name("zstd-rtools.exe"))
 
-        self.run(["make", "configure_ci"], extra_env=self.build_environment())
+        self.run(["make", "configure_ci", *self.make_overrides()], extra_env=self.build_environment())
         self.install_extra_vcpkg_dependencies()
 
     def setup_wasm(self) -> None:
@@ -508,7 +540,7 @@ class PhaseRunner:
             self.run(["sudo", "./aws/install", "--update"])
             self.run(["aws", "--version"])
         self.run_with_retry(
-            ["make", "configure_ci"],
+            ["make", "configure_ci", *self.make_overrides()],
             extra_env={"DUCKDB_GIT_VERSION": self.duckdb_ref()},
         )
         self.install_extra_vcpkg_dependencies()
@@ -671,6 +703,10 @@ class PhaseRunner:
             "CCACHE_MAXSIZE": "5G",
             "SUBSET_EXTENSIONS_TESTS": self.value("CI_EXTENSIONS_TEST_SELECTION"),
             "DUCKDB_PREBUILT_EXTENSIONS": self.value("DUCKDB_PREBUILT_EXTENSIONS"),
+            # Haybarn: engine version, test-time haybarn-cli and the vcpkg asset cache.
+            "OVERRIDE_GIT_DESCRIBE": self.value("OVERRIDE_GIT_DESCRIBE"),
+            "DUCKDB_TEST_VERSION": self.value("DUCKDB_TEST_VERSION"),
+            "X_VCPKG_ASSET_SOURCES": self.value("X_VCPKG_ASSET_SOURCES"),
         }
         values.update(test_environment(self.value("CI_TEST_CONFIG", "{}")))
         prebuilt_library = self.value("DUCKDB_PREBUILT_LIBRARY")
@@ -713,7 +749,7 @@ class PhaseRunner:
         self.create_docker_environment()
         self.install_extra_vcpkg_dependencies(docker=True)
         docker = self.docker_arguments()
-        self.run_with_retry([*docker, "make", "configure_ci"])
+        self.run_with_retry([*docker, "make", "configure_ci", *self.make_overrides()])
         self.run_with_retry([*docker, "make", self.required("CI_BUILD_TYPE")])
         post_build = self.value("CI_POST_BUILD_COMMAND")
         if post_build:
@@ -797,15 +833,15 @@ class PhaseRunner:
 
         if self.platform == "linux":
             if self.enabled("CI_LINUX_NATIVE_CONTAINER"):
-                self.run(["make", target], extra_env=environment)
+                self.run(["make", target, *self.make_overrides()], extra_env=environment)
             else:
-                self.run([*self.docker_arguments(), "make", target])
+                self.run([*self.docker_arguments(), "make", target, *self.make_overrides()])
                 environment["LINUX_CI_IN_DOCKER"] = "0"
-                self.run(["make", target], extra_env=environment)
+                self.run(["make", target, *self.make_overrides()], extra_env=environment)
         elif self.platform == "macos":
-            self.run(["make", target], extra_env=environment)
+            self.run(["make", target, *self.make_overrides()], extra_env=environment)
         elif self.platform == "windows":
-            self.run(["make", target], extra_env=environment)
+            self.run(["make", target, *self.make_overrides()], extra_env=environment)
 
     def test(self) -> None:
         if self.enabled("CI_SKIP_TESTS"):

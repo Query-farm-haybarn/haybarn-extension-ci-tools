@@ -14,6 +14,14 @@ on:
       - '**/*.md'
   workflow_dispatch:
 
+# Haybarn: the org's default GITHUB_TOKEN is contents/packages read only, so
+# grant what the called workflows request (deploy.yml needs actions: read)
+# or GitHub refuses to start the run.
+permissions:
+  actions: read
+  contents: read
+  packages: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' || github.sha }}
   cancel-in-progress: true

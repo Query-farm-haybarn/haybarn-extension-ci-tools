@@ -113,6 +113,36 @@ class CIPhaseTest(unittest.TestCase):
             self.assertIn("CC=gcc\n", docker_env)
             self.assertIn("CCACHE_DIR=/ccache_dir\n", docker_env)
 
+    def test_nested_engine_submodules_link_to_the_top_level_checkouts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            for path in ("duckdb", "extension-ci-tools", "external/duckdb", "external/extension-ci-tools", "third_party/other"):
+                (workspace / path).mkdir(parents=True)
+            (workspace / "external/duckdb/stale.txt").write_text("upstream pin")
+            (workspace / ".gitmodules").write_text("")
+            runner = RecordingRunner(self.environment(workspace))
+            runner.captured_output = (
+                "submodule.duckdb.path duckdb\n"
+                "submodule.external/duckdb.path external/duckdb\n"
+                "submodule.external/extension-ci-tools.path external/extension-ci-tools\n"
+                "submodule.third_party/other.path third_party/other\n"
+            )
+            self.assertEqual(
+                runner.nested_engine_submodule_paths(), ["external/duckdb", "external/extension-ci-tools"]
+            )
+            runner.link_nested_engine_submodules()
+            for name in ("duckdb", "extension-ci-tools"):
+                nested = workspace / "external" / name
+                self.assertTrue(nested.is_symlink())
+                self.assertEqual(os.readlink(nested), os.path.join("..", name))
+                self.assertEqual(nested.resolve(), (workspace / name).resolve())
+            self.assertFalse((workspace / "third_party/other").is_symlink())
+
+    def test_nested_engine_submodules_noop_without_gitmodules(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = RecordingRunner(self.environment(Path(directory)))
+            self.assertEqual(runner.nested_engine_submodule_paths(), [])
+
     def test_boolean_and_toolchain_parsing(self):
         self.assertTrue(is_true("true"))
         self.assertTrue(is_true("1"))

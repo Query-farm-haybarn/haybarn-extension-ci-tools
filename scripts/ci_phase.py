@@ -12,7 +12,7 @@ import glob
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shlex
 import shutil
@@ -274,8 +274,53 @@ class PhaseRunner:
         if duckdb_tag:
             self.run(["make", "set_duckdb_tag"], extra_env={"DUCKDB_TAG": duckdb_tag})
 
+        self.link_nested_engine_submodules()
+
         if self.enabled("CI_FETCH_PREBUILT_DUCKDB"):
             self.prebuilt()
+
+    def nested_engine_submodule_paths(self) -> list[str]:
+        """Submodule paths below the root that vendor duckdb or extension-ci-tools."""
+        if not (self.workspace / ".gitmodules").is_file():
+            return []
+        try:
+            listing = self.capture(
+                ["git", "config", "--file", ".gitmodules", "--get-regexp", r"^submodule\..*\.path$"]
+            )
+        except subprocess.CalledProcessError:
+            # git config exits 1 when no key matches.
+            return []
+        paths = []
+        for line in listing.splitlines():
+            parts = line.split(maxsplit=1)
+            if len(parts) != 2:
+                continue
+            path = parts[1].strip().strip("/")
+            if "/" in path and PurePosixPath(path).name in ("duckdb", "extension-ci-tools"):
+                paths.append(path)
+        return paths
+
+    def link_nested_engine_submodules(self) -> None:
+        # Haybarn: extensions that vendor duckdb / extension-ci-tools under a
+        # subdirectory (e.g. external/duckdb) would otherwise build against their
+        # own upstream DuckDB pin there. Point those paths at the top-level Haybarn
+        # engine and ci-tools checkouts: a relative symlink on Unix (it survives the
+        # Docker remap to /duckdb_build_dir), a junction on Windows.
+        for path in self.nested_engine_submodule_paths():
+            nested = self.workspace / path
+            target = self.workspace / PurePosixPath(path).name
+            if not target.is_dir():
+                raise FileNotFoundError(f"{target} is missing; cannot link nested submodule {path}")
+            if nested.is_symlink() or nested.is_file():
+                nested.unlink()
+            elif nested.is_dir():
+                shutil.rmtree(nested)
+            nested.parent.mkdir(parents=True, exist_ok=True)
+            if self.platform == "windows":
+                self.run(["cmd", "/c", "mklink", "/J", str(nested), str(target)])
+            else:
+                nested.symlink_to(os.path.relpath(target, nested.parent), target_is_directory=True)
+            print(f"Linked nested submodule {path} to the top-level {target.name} checkout", flush=True)
 
     def _open_prebuilt_url(self, url: str):
         request = urllib.request.Request(

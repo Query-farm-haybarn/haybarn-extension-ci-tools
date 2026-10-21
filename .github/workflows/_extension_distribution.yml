@@ -448,7 +448,9 @@ jobs:
         run: python3 extension-ci-tools/scripts/ci_phase.py upload
 
       - name: Upload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        # Haybarn: retries the artifact control-plane registration, which
+        # occasionally drops; see the action.
+        uses: ./extension-ci-tools/.github/actions/upload-artifact-retry
         with:
           if-no-files-found: error
           name: ${{ steps.artifacts.outputs.artifact_name }}
@@ -557,7 +559,9 @@ jobs:
         run: python3 extension-ci-tools/scripts/ci_phase.py upload
 
       - name: Upload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        # Haybarn: retries the artifact control-plane registration, which
+        # occasionally drops; see the action.
+        uses: ./extension-ci-tools/.github/actions/upload-artifact-retry
         with:
           if-no-files-found: error
           name: ${{ steps.artifacts.outputs.artifact_name }}
@@ -714,7 +718,9 @@ jobs:
         run: python extension-ci-tools/scripts/ci_phase.py upload
 
       - name: Upload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        # Haybarn: retries the artifact control-plane registration, which
+        # occasionally drops; see the action.
+        uses: ./extension-ci-tools/.github/actions/upload-artifact-retry
         with:
           if-no-files-found: error
           name: ${{ steps.artifacts.outputs.artifact_name }}
@@ -877,7 +883,9 @@ jobs:
         run: python3 extension-ci-tools/scripts/ci_phase.py upload
 
       - name: Upload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        # Haybarn: retries the artifact control-plane registration, which
+        # occasionally drops; see the action.
+        uses: ./extension-ci-tools/.github/actions/upload-artifact-retry
         with:
           if-no-files-found: error
           name: ${{ steps.artifacts.outputs.artifact_name }}

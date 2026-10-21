@@ -540,6 +540,14 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.matrix.outputs.build_wasm) }}
     env:
+      # Haybarn: emscripten 6.0.6 stopped linking libc++ when the link is driven
+      # by `emcc` rather than `em++`. C dependencies that pull in a C++ static
+      # library (avro-c's tools against libsnappy.a) then fail with undefined
+      # `operator new`/`__cxa_guard_*`. Restore the pre-6 default for every
+      # emcc invocation in the build, dependencies included. The -Wno flag keeps
+      # compile-only calls quiet (emcc warns that the link setting is unused
+      # there, which is fatal for dependencies that build with -Werror).
+      EMCC_CFLAGS: -sDEFAULT_TO_CXX -Wno-unused-command-line-argument
       DUCKDB_VERSION: ${{ needs.matrix.outputs.duckdb_version }}
       DUCKDB_COMMIT: ${{ needs.matrix.outputs.duckdb_commit }}
       GEN: make
@@ -580,7 +588,8 @@ jobs:
       - name: Setup Emscripten
         uses: emscripten-core/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
         with:
-          version: 6.0.9
+          # Haybarn: 6.0.12 (upstream 6.0.9), matching haybarn-wasm.
+          version: 6.0.12
       - name: Setup Rust
         if: ${{ matrix.toolchain == 'rust' }}
         uses: dtolnay/rust-toolchain@4d407b29186a635f0cc27475ef0bc0ae605a8866 # 1.86.0

@@ -720,10 +720,35 @@ jobs:
           version: 6.0.13
 
       - name: Setup / Rust
-        if: ${{ inputs.enable_rust || contains(format(';{0};', inputs.extra_toolchains), ';rust;') }}
+        if: ${{ (inputs.enable_rust || contains(format(';{0};', inputs.extra_toolchains), ';rust;')) && matrix.duckdb_arch == 'wasm_mvp' }}
         uses: *rust-toolchain-action
         with:
           targets: wasm32-unknown-emscripten
+
+      # Haybarn: the Haybarn wasm_eh / wasm_threads engines are built with native
+      # wasm exceptions (-fwasm-exceptions). Rust extensions for them rebuild std
+      # with a pinned nightly (-Z build-std, needs rust-src), whose
+      # wasm32-unknown-emscripten default is native EH; the stable precompiled
+      # std carries legacy emscripten EH trampolines the engine never provides
+      # (`TypeError: c is not a function` at the first exception path,
+      # haybarn-wasm#9). wasm_threads also needs shared-memory atomics.
+      - name: Setup / Rust (nightly, native wasm EH)
+        if: ${{ (inputs.enable_rust || contains(format(';{0};', inputs.extra_toolchains), ';rust;')) && matrix.duckdb_arch != 'wasm_mvp' }}
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master (takes a toolchain input)
+        with:
+          toolchain: nightly-2026-05-20
+          targets: wasm32-unknown-emscripten
+          components: rust-src
+
+      - name: Setup / Rust wasm flags
+        if: ${{ (inputs.enable_rust || contains(format(';{0};', inputs.extra_toolchains), ';rust;')) && matrix.duckdb_arch != 'wasm_mvp' }}
+        shell: bash
+        run: |
+          echo 'CARGO_UNSTABLE_BUILD_STD=std,panic_abort' >> "$GITHUB_ENV"
+          # target-scoped, so host build scripts and proc-macros stay non-atomic
+          if [ "${{ matrix.duckdb_arch }}" = "wasm_threads" ]; then
+            echo 'CARGO_TARGET_WASM32_UNKNOWN_EMSCRIPTEN_RUSTFLAGS=-Ctarget-feature=+atomics,+bulk-memory,+mutable-globals' >> "$GITHUB_ENV"
+          fi
 
       - name: Setup / Go
         if: ${{ contains(format(';{0};', inputs.extra_toolchains), ';go;') }}

@@ -452,7 +452,13 @@ class PhaseRunner:
         )
 
     def setup_macos(self) -> None:
-        self.run(["brew", "install", "ninja", "autoconf", "make", "libtool", "automake", "autoconf-archive"])
+        # Haybarn: bison and flex unconditionally - several extensions need them
+        # without declaring parser_tools.
+        self.run(
+            ["brew", "install", "ninja", "autoconf", "make", "libtool", "automake", "autoconf-archive", "bison", "flex"]
+        )
+        if self.architecture == "osx_arm64":
+            self.setup_macos_brew_shim()
         self.install_vcpkg()
         tools = self.value("CI_EXTRA_TOOLCHAINS")
         osx_arch = self.value("CI_OSX_BUILD_ARCH")
@@ -472,6 +478,20 @@ class PhaseRunner:
             self.run(["aws", "--version"])
         self.run(["make", "configure_ci", *self.make_overrides()], extra_env={"DUCKDB_GIT_VERSION": self.duckdb_ref()})
         self.install_extra_vcpkg_dependencies()
+
+    def setup_macos_brew_shim(self) -> None:
+        # Haybarn: Apple Silicon runners keep brew in /opt/homebrew, but some
+        # extensions' CMake files (odbc_scanner) call the Intel path
+        # /usr/local/bin/brew. exec, not a symlink, so brew still locates its
+        # real prefix. osx_amd64 builds install Intel Homebrew there themselves.
+        if not Path("/opt/homebrew/bin/brew").exists() or Path("/usr/local/bin/brew").exists():
+            return
+        self.run(
+            "sudo mkdir -p /usr/local/bin && "
+            "printf '#!/bin/bash\\nexec /opt/homebrew/bin/brew \"$@\"\\n' | sudo tee /usr/local/bin/brew >/dev/null && "
+            "sudo chmod +x /usr/local/bin/brew",
+            shell=True,
+        )
 
     def setup_macos_omp(self) -> None:
         if self.architecture == "osx_amd64":

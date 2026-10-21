@@ -208,6 +208,27 @@ class CIPhaseTest(unittest.TestCase):
             self.assertNotIn("OVERRIDE_GIT_DESCRIBE", runner.env)
             self.assertEqual(runner.make_overrides(), [])
 
+    def test_macos_setup_installs_parser_tools_and_brew_shim_on_arm64(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = RecordingRunner(self.environment(directory, "macos", "osx_arm64"))
+            runner.install_vcpkg = mock.Mock()
+            runner.install_extra_vcpkg_dependencies = mock.Mock()
+            exists = {"/opt/homebrew/bin/brew": True, "/usr/local/bin/brew": False}
+            with mock.patch.object(Path, "exists", lambda path: exists.get(str(path), False)):
+                runner.setup_macos()
+            brew_install = runner.commands[0][0]
+            self.assertIn("bison", brew_install)
+            self.assertIn("flex", brew_install)
+            self.assertTrue(any(isinstance(command, str) and "/usr/local/bin/brew" in command for command, _ in runner.commands))
+
+    def test_macos_brew_shim_skipped_off_arm64(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = RecordingRunner(self.environment(directory, "macos", "osx_amd64"))
+            runner.install_vcpkg = mock.Mock()
+            runner.install_extra_vcpkg_dependencies = mock.Mock()
+            runner.setup_macos()
+            self.assertFalse(any(isinstance(command, str) and "/usr/local/bin/brew" in command for command, _ in runner.commands))
+
     def test_duckdb_ref_falls_back_to_version(self):
         with tempfile.TemporaryDirectory() as directory:
             runner = RecordingRunner(self.environment(directory))

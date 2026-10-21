@@ -744,6 +744,12 @@ class PhaseRunner:
             "CC": "gcc",
             "CXX": "g++",
             "CCACHE_DIR": "/ccache_dir",
+            # Haybarn: the shared R2 ccache and its tuning, inside the build container.
+            "CCACHE_REMOTE_STORAGE": self.value("CCACHE_REMOTE_STORAGE"),
+            "CCACHE_BASEDIR": "/duckdb_build_dir",
+            "CCACHE_NOHASHDIR": self.value("CCACHE_NOHASHDIR"),
+            "CCACHE_SLOPPINESS": self.value("CCACHE_SLOPPINESS"),
+            "CCACHE_COMPILERCHECK": self.value("CCACHE_COMPILERCHECK"),
             # Haybarn: engine version, test-time haybarn-cli and the vcpkg asset cache.
             "OVERRIDE_GIT_DESCRIBE": self.value("OVERRIDE_GIT_DESCRIBE"),
             "DUCKDB_TEST_VERSION": self.value("DUCKDB_TEST_VERSION"),

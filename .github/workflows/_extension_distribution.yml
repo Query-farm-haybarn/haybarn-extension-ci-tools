@@ -274,6 +274,13 @@ env:
   X_VCPKG_ASSET_SOURCES: "${{ inputs.vcpkg_asset_sources == '' && format('clear;x-azurl,https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/assets/,auth={0},readwrite', secrets.vcpkg_token) || inputs.vcpkg_asset_sources }}"
   USE_MERGED_VCPKG_MANIFEST: ${{ inputs.use_merged_vcpkg_manifest }}
   USE_DEFAULT_RUNNERS: ${{ inputs.runners == '{}' }}
+  # Haybarn: shared ccache on the same Worker/R2 (as build.yml and the engine
+  # release), so community builds hit across runs, repos and legs instead of
+  # thrashing the 10 GB GitHub cache. Remote errors are misses, not failures.
+  CCACHE_REMOTE_STORAGE: "${{ format('http://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache|bearer-token={0}|connect-timeout=10000|operation-timeout=30000', secrets.vcpkg_token) }}"
+  CCACHE_NOHASHDIR: "1"
+  CCACHE_SLOPPINESS: "time_macros,include_file_mtime,pch_defines"
+  CCACHE_COMPILERCHECK: "content"
   CI_EXTENSION_NAME: ${{ inputs.extension_name }}
   CI_EXTENSION_CANONICAL: ${{ inputs.extension_canonical }}
   DUCKDB_VERSION: ${{ inputs.duckdb_version }}

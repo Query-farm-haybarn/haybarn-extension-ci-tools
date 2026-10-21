@@ -100,7 +100,7 @@ jobs:
           cat "$GITHUB_OUTPUT"
 
   deploy:
-    name: Deploy to nightly (${{ matrix.duckdb_arch }})
+    name: Deploy to Haybarn R2 (${{ matrix.duckdb_arch }})
     runs-on: ubuntu-latest
     needs: generate_matrix
     if: ${{ needs.generate_matrix.outputs.deploy_matrix != '{}' && needs.generate_matrix.outputs.deploy_matrix != '' }}
@@ -126,6 +126,9 @@ jobs:
           CI_PLATFORM: linux
           DUCKDB_PLATFORM: ${{ matrix.duckdb_arch }}
           DUCKDB_VERSION: ${{ inputs.duckdb_version }}
+          # Haybarn: deploy against the Haybarn engine fork; an extension's own
+          # duckdb/ submodule (pointing at upstream) is re-pointed to it.
+          CI_DUCKDB_GIT_REPOSITORY: https://github.com/Query-farm-haybarn/haybarn.git
         run: python3 extension-ci-tools/scripts/ci_phase.py checkout
 
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
@@ -135,25 +138,31 @@ jobs:
             /tmp/extension
 
       - name: Deploy
-        shell: bash
+        # Haybarn: upload to the Haybarn R2 bucket with the engine-shared secret
+        # names (as the engine's core-extension publish does), signed with the
+        # Haybarn extension key. DuckDB's nightly bucket secrets are not set in
+        # Haybarn repos, where the upstream step silently uploaded nothing.
         env:
-          AWS_ENDPOINT_URL: ${{ secrets.DUCKDB_EXTENSIONS_NIGHTLY_S3_ENDPOINT }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.DUCKDB_EXTENSIONS_NIGHTLY_S3_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.DUCKDB_EXTENSIONS_NIGHTLY_S3_KEY }}
-          BUCKET_NAME: 'duckdb-extensions-nightly'
-          DUCKDB_EXTENSION_SIGNING_PK: ${{ secrets.S3_DUCKDB_ORG_EXTENSION_SIGNING_PK }}
-          DUCKDB_DEPLOY_SCRIPT_MODE: ${{ secrets.DUCKDB_EXTENSIONS_NIGHTLY_S3_KEY != '' && 'for_real' || '' }}
-          PIP_BREAK_SYSTEM_PACKAGES: 1
-        run: |
-          pwd
-          python3 -m pip install awscli
-          git config --global --add safe.directory '*'
-          cd duckdb
-          git fetch --tags
-          export DUCKDB_VERSION=`git tag --points-at HEAD`
-          export DUCKDB_VERSION=${DUCKDB_VERSION:=`git log -1 --format=%h`}
-          cd ..
-          git fetch --tags
-          export EXT_VERSION=`git tag --points-at HEAD`
-          export EXT_VERSION=${EXT_VERSION:=`git log -1 --format=%h`}
-          ${{ inputs.deploy_script }} ${{ inputs.extension_name }} $EXT_VERSION $DUCKDB_VERSION ${{ matrix.duckdb_arch }} $BUCKET_NAME ${{inputs.deploy_latest || 'true' && 'false'}} ${{inputs.deploy_versioned || 'true' && 'false'}}
+          AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          # The org secret holding the secret half is named R2_SECRET_KEY_ID.
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_KEY_ID }}
+          AWS_DEFAULT_REGION: auto
+          # R2 rejects the newer default sigv4 checksum headers.
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          # Core-extension layout <bucket>/core/...; aws s3 cp takes the prefix
+          # as part of the object key.
+          BUCKET_NAME: ${{ secrets.R2_BUCKET }}/core
+          DUCKDB_EXTENSION_SIGNING_PK: ${{ secrets.HAYBARN_EXTENSION_SIGNING_PK }}
+          DUCKDB_DEPLOY_SCRIPT_MODE: ${{ secrets.R2_SECRET_KEY_ID != '' && 'for_real' || '' }}
+        # CalVer EXT_VERSION, haybarn-v* -> vX.Y.Z URL segment and the short
+        # Cache-Control on the rolling-latest path live in a composite action so
+        # other Haybarn workflows can reuse them.
+        uses: ./extension-ci-tools/.github/actions/calver-deploy
+        with:
+          extension_name: ${{ inputs.extension_name }}
+          duckdb_arch: ${{ matrix.duckdb_arch }}
+          deploy_latest: ${{ inputs.deploy_latest }}
+          deploy_versioned: ${{ inputs.deploy_versioned }}
+          deploy_script: ${{ inputs.deploy_script }}

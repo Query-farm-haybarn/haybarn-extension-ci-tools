@@ -6,8 +6,13 @@
 #   ghcr.io/query-farm-haybarn/haybarn-wasm-base:<engine_version>   emsdk 6.0.13, vcpkg, ccache, sccache
 #   ghcr.io/query-farm-haybarn/haybarn-wasm-rust:<engine_version>   + Rust 1.86.0 with wasm32-unknown-emscripten
 #
-# haybarn-wasm 2.0's CI runs its JS and data-prep steps in haybarn-wasm-base, resolving the tag from its
-# workspace version (2.0.0-rcN -> v2.0.0), as the 1.5 line does with v1.5.6.
+# haybarn-wasm 2.0 builds its wasm bundles and runs its JS steps in haybarn-wasm-base, and build.yml /
+# _extension_distribution.yml build the extension .wasm files in it, all pinned to one tag + digest.
+#
+# Each image is built natively for linux/amd64 (CI) and linux/arm64 (the arm64 build host) and the
+# two are joined under one multi-arch tag. A tag is never overwritten: publish a new one (v2.0.0-2,
+# v2.0.0-3, ...) and re-pin the consumers, so a running job never sees its image change. The
+# per-arch tags (<tag>-amd64, <tag>-arm64) are intermediate.
 #
 # Dispatch only, with --ref haybarn-2.0 (the file has to exist on the default branch to be dispatchable,
 # and there it is the 1.5 version). Never pushes :latest, which the 1.5 consumers fall back to.
@@ -31,8 +36,8 @@ env:
 
 jobs:
   build_wasm:
-    name: wasm / ${{ matrix.variant.name }}
-    runs-on: ubuntu-latest
+    name: wasm / ${{ matrix.variant.name }} / ${{ matrix.arch.name }}
+    runs-on: ${{ matrix.arch.runner }}
     permissions:
       contents: read
       packages: write
@@ -42,6 +47,9 @@ jobs:
         variant:
           - { name: base, extras: '' }
           - { name: rust, extras: ';rust;' }
+        arch:
+          - { name: amd64, runner: ubuntu-latest }
+          - { name: arm64, runner: ubuntu-24.04-arm }
     steps:
       - uses: actions/checkout@v6
 
@@ -52,9 +60,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build image
+      - name: Refuse to overwrite a published tag
         run: |
           TAG="ghcr.io/query-farm-haybarn/haybarn-wasm-${{ matrix.variant.name }}:${HAYBARN_ENGINE_VERSION}"
+          if docker manifest inspect "${TAG}" > /dev/null 2>&1; then
+            echo "::error::${TAG} already exists; publish a new tag instead (consumers pin tags by digest)"
+            exit 1
+          fi
+
+      - name: Build image
+        run: |
+          TAG="ghcr.io/query-farm-haybarn/haybarn-wasm-${{ matrix.variant.name }}:${HAYBARN_ENGINE_VERSION}-${{ matrix.arch.name }}"
           echo "TAG=${TAG}" >> "$GITHUB_ENV"
           docker build \
             --build-arg "vcpkg_url=https://github.com/microsoft/vcpkg.git" \
@@ -62,7 +78,28 @@ jobs:
             --build-arg "extra_toolchains=${{ matrix.variant.extras }}" \
             -t "${TAG}" \
             ./docker/wasm
-          docker run --rm "${TAG}" bash -lc 'emcc --version | head -1; ccache --version | head -1; sccache --version; node --version || true; (rustc --version && rustup target list --installed) || true'
+
+      # As a GitHub `container:` job runs it: plain sh, HOME=/github/home, nothing from /etc/profile.d.
+      - name: Check the image
+        run: |
+          docker run --rm -e HOME=/github/home "${TAG}" sh -euc '
+            mkdir -p "$HOME" && cd "$(mktemp -d)"
+            echo "emscripten ${HAYBARN_EMSCRIPTEN_VERSION:?image declares no HAYBARN_EMSCRIPTEN_VERSION}"
+            emcc --version | head -1 | grep -F "${HAYBARN_EMSCRIPTEN_VERSION}"
+            test "$(command -v emcc)" = /emsdk/upstream/emscripten/emcc
+            node --version; js-beautify -v; ccache --version | head -1; sccache --version; wasm2wat --version
+            git config --get-all safe.directory | grep -Fx "*"
+            if command -v rustc > /dev/null; then rustc --version; rustup target list --installed | grep -Fx wasm32-unknown-emscripten; fi
+            # A main module that loads side modules links the PIC system libraries; they must come
+            # from the image, not be built in every job.
+            printf "#include <cstdio>\nint main() { try { throw 1; } catch (int) { std::puts(\"ok\"); } }\n" > m.cpp
+            for flags in "-fwasm-exceptions" "-fwasm-exceptions -pthread -sSHARED_MEMORY=1"; do
+              em++ $flags -sMAIN_MODULE=2 -O1 m.cpp -o m.js > link.log 2>&1 || { cat link.log; exit 1; }
+              cat link.log
+              if grep -F "generating system library" link.log; then exit 1; fi
+              test "$(node m.js)" = ok
+            done
+          '
 
       - name: Push
         run: |
@@ -75,3 +112,34 @@ jobs:
             sleep $((i * 15))
           done
           exit 1
+
+  merge:
+    name: wasm / ${{ matrix.variant }} / multi-arch tag
+    needs: build_wasm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [base, rust]
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create the multi-arch tag
+        run: |
+          TAG="ghcr.io/query-farm-haybarn/haybarn-wasm-${{ matrix.variant }}:${HAYBARN_ENGINE_VERSION}"
+          if docker manifest inspect "${TAG}" > /dev/null 2>&1; then
+            echo "::error::${TAG} already exists"
+            exit 1
+          fi
+          docker buildx imagetools create -t "${TAG}" "${TAG}-amd64" "${TAG}-arm64"
+          docker buildx imagetools inspect "${TAG}"
+          echo "### ${TAG}" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`$(docker buildx imagetools inspect "${TAG}" --format '{{json .Manifest}}' | jq -r .digest)\`" >> "$GITHUB_STEP_SUMMARY"

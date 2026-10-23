@@ -6,6 +6,14 @@ FROM ubuntu:24.04
 # and downstream tooling (e.g. dependabot) can find provenance.
 LABEL org.opencontainers.image.source="https://github.com/Query-farm-haybarn/haybarn-extension-ci-tools"
 LABEL org.opencontainers.image.description="Haybarn 2.0 wasm build environment (emscripten 6.0.13 + vcpkg + ccache + sccache)"
+
+# Used three ways, so the emscripten version has one source of truth:
+#   * haybarn-wasm 2.0 builds its wasm bundles in this image (GitHub `container:` jobs) and
+#     haybarn-extension-ci-tools 2.0 builds the extension .wasm files in it, so the main module
+#     and the side modules it loads come from the same emscripten;
+#   * HAYBARN_EMSCRIPTEN_VERSION (below) is what those jobs check `emcc --version` against;
+#   * linux/amd64 and linux/arm64 are published under one tag, so the same reference also runs
+#     natively on an arm64 build host.
 LABEL org.opencontainers.image.licenses="MIT"
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -36,26 +44,31 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
       lsb-release \
       bison \
       flex \
+      wabt \
+      zstd \
+      sudo \
     && rm -rf /var/lib/apt/lists/*
 
 # ccache 4.13.6 musl-static. Same binary the macos/win/linux legs use;
 # Ubuntu 24.04 ships 4.9.1 in apt, which has the broken HTTP bearer-auth
 # we saw silently dropping cache writes on wasm legs before.
 ARG CCACHE_VERSION=4.13.6
-RUN curl -fsSL "https://github.com/ccache/ccache/releases/download/v${CCACHE_VERSION}/ccache-${CCACHE_VERSION}-linux-x86_64-musl-static.tar.xz" \
+RUN arch="$(uname -m)" \
+    && curl -fsSL "https://github.com/ccache/ccache/releases/download/v${CCACHE_VERSION}/ccache-${CCACHE_VERSION}-linux-${arch}-musl-static.tar.xz" \
       -o /tmp/ccache.tar.xz \
     && tar -xJf /tmp/ccache.tar.xz -C /tmp \
-    && install -m 0755 "/tmp/ccache-${CCACHE_VERSION}-linux-x86_64-musl-static/ccache" /usr/local/bin/ccache \
-    && rm -rf /tmp/ccache.tar.xz "/tmp/ccache-${CCACHE_VERSION}-linux-x86_64-musl-static" \
+    && install -m 0755 "/tmp/ccache-${CCACHE_VERSION}-linux-${arch}-musl-static/ccache" /usr/local/bin/ccache \
+    && rm -rf /tmp/ccache.tar.xz "/tmp/ccache-${CCACHE_VERSION}-linux-${arch}-musl-static" \
     && /usr/local/bin/ccache --version
 
 # sccache — Rust rustc-wrapper cache, used when extra_toolchains includes rust.
 ARG SCCACHE_VERSION=0.8.2
-RUN curl -fsSL "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+RUN arch="$(uname -m)" \
+    && curl -fsSL "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-${arch}-unknown-linux-musl.tar.gz" \
       -o /tmp/sccache.tar.gz \
     && tar -xzf /tmp/sccache.tar.gz -C /tmp \
-    && install -m 0755 "/tmp/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl/sccache" /usr/local/bin/sccache \
-    && rm -rf /tmp/sccache.tar.gz "/tmp/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl" \
+    && install -m 0755 "/tmp/sccache-v${SCCACHE_VERSION}-${arch}-unknown-linux-musl/sccache" /usr/local/bin/sccache \
+    && rm -rf /tmp/sccache.tar.gz "/tmp/sccache-v${SCCACHE_VERSION}-${arch}-unknown-linux-musl" \
     && /usr/local/bin/sccache --version
 
 # Emscripten SDK — baked at a stable absolute path /emsdk so consumer
@@ -69,7 +82,9 @@ RUN git clone --depth 1 https://github.com/emscripten-core/emsdk.git /emsdk \
     && cd /emsdk \
     && ./emsdk install ${EMSDK_VERSION} \
     && ./emsdk activate ${EMSDK_VERSION} \
-    && echo "source /emsdk/emsdk_env.sh > /dev/null" >> /etc/profile.d/emsdk.sh
+    && echo "source /emsdk/emsdk_env.sh > /dev/null" >> /etc/profile.d/emsdk.sh \
+    && ln -s "$(ls -d /emsdk/node/*_64bit | head -1)" /emsdk/node/current \
+    && /emsdk/node/current/bin/node --version
 
 # Make emcc / em++ / node available without sourcing emsdk_env.sh. The
 # emsdk install puts everything under /emsdk/upstream/emscripten and ships
@@ -77,10 +92,36 @@ RUN git clone --depth 1 https://github.com/emscripten-core/emsdk.git /emsdk \
 # node's version path because emsdk_env.sh resolves it dynamically; the
 # easier approach is to source it on shell entry (above) and also point
 # PATH directly at the static parts here.
+#
+# GitHub `container:` jobs run their steps with a plain (non-login) shell and HOME=/github/home, so
+# nothing from /etc/profile.d or /root applies there: everything a build needs is set with ENV.
+# /emsdk/node/current is a symlink to emsdk's bundled node (24.x for 6.0.13), whose versioned
+# directory name changes with every emsdk release.
 ENV EMSDK=/emsdk
-ENV EMSDK_NODE=/emsdk/node
+ENV EMSDK_NODE=/emsdk/node/current/bin/node
+ENV EM_CONFIG=/emsdk/.emscripten
 ENV EMSCRIPTEN_ROOT=/emsdk/upstream/emscripten
-ENV PATH="/emsdk:/emsdk/upstream/emscripten:${PATH}"
+ENV PATH="/emsdk:/emsdk/upstream/emscripten:/emsdk/node/current/bin:${PATH}"
+# What the jobs that build in this image check `emcc --version` against.
+ENV HAYBARN_EMSCRIPTEN_VERSION=${EMSDK_VERSION}
+LABEL farm.query.haybarn.emscripten-version="${EMSDK_VERSION}"
+
+# emsdk ships its system-library cache prebuilt, but without the PIC variants. A main module
+# that loads extensions (-sMAIN_MODULE, haybarn-wasm's loadable bundles) links these, and emcc
+# would otherwise build them in every job (~30 s each, and not covered by ccache).
+RUN embuilder --pic build \
+      libc libc-mt libdlmalloc libdlmalloc-mt \
+      libc++-legacyexcept libc++-mt-legacyexcept \
+      libc++abi-legacyexcept libc++abi-mt-legacyexcept \
+      libunwind-legacyexcept libunwind-mt-legacyexcept \
+      libclang_rt.builtins-legacysjlj libclang_rt.builtins-legacysjlj-mt \
+      libembind-rtti libembind-mt-rtti libGL-getprocaddr libGL-mt-getprocaddr \
+      libal libhtml5 libstubs libnoexit libsockets libsockets-mt \
+    && emcc --version | head -1 | grep -F "${EMSDK_VERSION}"
+
+# haybarn-wasm's build script post-processes the emscripten glue with js-beautify (the GitHub
+# runner image preinstalls this version).
+RUN npm install -g --no-fund --no-audit js-beautify@2.0.3 && js-beautify -v
 
 # Setup VCPKG — baked into the image like the Linux Phase A variants do.
 # Wasm-specific triplets/toolchain come from the consumer's CMake config,
@@ -93,6 +134,7 @@ RUN mkdir /vcpkg \
     && git remote add origin $vcpkg_url \
     && git fetch origin $vcpkg_commit \
     && git checkout $vcpkg_commit \
+    && if [ "$(uname -m)" = aarch64 ]; then export VCPKG_FORCE_SYSTEM_BINARIES=1; fi \
     && ./bootstrap-vcpkg.sh -disableMetrics
 ENV VCPKG_ROOT=/vcpkg
 ENV VCPKG_TOOLCHAIN_PATH=/vcpkg/scripts/buildsystems/vcpkg.cmake
@@ -108,8 +150,9 @@ ENV PATH="${VCPKG_ROOT}:${PATH}"
 # Unix Makefiles; this image mirrors that for compat.
 ENV DUCKDB_PLATFORM=wasm
 
-# Allow git access to the mounted volume.
-RUN git config --global --add safe.directory "*"
+# Allow git access to the mounted volume. System-wide: GitHub container jobs set HOME=/github/home,
+# where root's global config is not read.
+RUN git config --system --add safe.directory "*" && git config --global --add safe.directory "*"
 
 # Specify where we expect the extension to be mounted and use that as
 # working dir. Caller does `docker run -v $PWD:/duckdb_build_dir`.
@@ -165,6 +208,10 @@ ARG RUST_VERSION=1.86.0
 # issue; this image bakes a newer emsdk, so nightly should be compatible —
 # validate before relying on it.
 ARG RUST_COMPONENTS=
+# Fixed rustup/cargo homes: GitHub container jobs set HOME=/github/home, and rustup would otherwise
+# look for its toolchains there and find none.
+ENV RUSTUP_HOME=/root/.rustup
+ENV CARGO_HOME=/root/.cargo
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN case "$extra_toolchains" in \
   *\;rust\;*) \

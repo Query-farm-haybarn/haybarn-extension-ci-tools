@@ -833,6 +833,12 @@ class PhaseRunner:
             "EXTENSION_NAME": self.required("CI_EXTENSION_NAME"),
             "EXTENSION_CANONICAL": self.value("CI_EXTENSION_CANONICAL"),
             "LINUX_CI_IN_DOCKER": "1",
+            # Haybarn: the bind-mounted checkout belongs to the runner user, not the
+            # container's root, so git refuses it ("dubious ownership") and DuckDB's
+            # CMake stamps the placeholder hash 0123456789 into the extension.
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "safe.directory",
+            "GIT_CONFIG_VALUE_0": "*",
             "GITHUB_ACTIONS": "true",
             "CI": "true",
             "CCACHE_MAXSIZE": "5G",

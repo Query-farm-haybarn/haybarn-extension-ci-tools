@@ -304,6 +304,7 @@ class CIPhaseTest(unittest.TestCase):
             # CMake prefers $ENV{DUCKDB_VERSION}: the build sees the engine version,
             # the checkout keeps the tag.
             self.assertIn("DUCKDB_VERSION=v2.0.0\n", docker_environment)
+            self.assertIn("GIT_CONFIG_KEY_0=safe.directory\n", docker_environment)
             self.assertEqual(runner.build_environment()["DUCKDB_VERSION"], "v2.0.0")
             self.assertEqual(runner.duckdb_ref(), "haybarn-v2.0.0-rc1")
 

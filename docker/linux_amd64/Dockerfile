@@ -6,7 +6,14 @@ RUN yum install -y curl zip unzip tar autoconf libtool
 RUN yum install -y ninja-build
 RUN yum install -y perl-IPC-Cmd
 RUN yum install -y perl-core
-RUN yum install -y ccache
+# Haybarn: ccache 4 (static release) instead of yum's 3.7.7, which has no remote
+# storage, so inline-built images also use the shared R2 ccache (CCACHE_REMOTE_STORAGE).
+ARG CCACHE_VERSION=4.13.6
+RUN curl -fsSL "https://github.com/ccache/ccache/releases/download/v${CCACHE_VERSION}/ccache-${CCACHE_VERSION}-linux-x86_64-musl-static.tar.xz" -o /tmp/ccache.tar.xz && \
+    tar -xJf /tmp/ccache.tar.xz -C /tmp && \
+    install -m 0755 "/tmp/ccache-${CCACHE_VERSION}-linux-x86_64-musl-static/ccache" /usr/local/bin/ccache && \
+    rm -rf /tmp/ccache.tar.xz "/tmp/ccache-${CCACHE_VERSION}-linux-x86_64-musl-static" && \
+    ccache --version | head -1
 RUN yum install -y java-11-openjdk-devel maven
 RUN yum install -y wget
 RUN yum install -y kernel-headers

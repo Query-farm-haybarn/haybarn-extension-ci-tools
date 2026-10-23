@@ -52,6 +52,13 @@ HAYBARN_IMAGE_VCPKG_COMMIT = "cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3"
 HAYBARN_IMAGE_VCPKG_URL = "https://github.com/microsoft/vcpkg.git"
 # Toolchains every image provides, then each image variant's extras, smallest first.
 HAYBARN_IMAGE_BASE_TOOLCHAINS = {"parser_tools", "unixodbc", "python3"}
+# Toolchains docker/linux_*/Dockerfile installs. Descriptors also carry labels
+# the inline image ignores (vcpkg, cmake, openssl, omp, ...); they must not force
+# an inline build, which costs the image build and, before ccache 4 there, the
+# shared ccache.
+INLINE_IMAGE_TOOLCHAINS = {
+    "parser_tools", "fortran", "rust", "go", "unixodbc", "multimedia", "cuda", "python3",
+}
 # Haybarn: Rust compile cache for Linux Docker builds, on the same Worker/R2 as
 # ccache (sccache/ keyspace). musl-static, so it runs on manylinux and Alpine.
 SCCACHE_VERSION = "0.8.2"
@@ -898,6 +905,7 @@ class PhaseRunner:
             print("vcpkg differs from the prebuilt images' vcpkg; building the image inline.", flush=True)
             return ""
         wanted = {tool for tool in self.value("CI_EXTRA_TOOLCHAINS").split(";") if tool}
+        wanted &= INLINE_IMAGE_TOOLCHAINS
         wanted -= HAYBARN_IMAGE_BASE_TOOLCHAINS
         variant = next((name for name, tools in HAYBARN_IMAGE_VARIANTS if wanted <= tools), "")
         if not variant:

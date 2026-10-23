@@ -78,6 +78,9 @@ class CIPhaseTest(unittest.TestCase):
             ("linux_amd64", "", f"{registry}/manylinux_2_28_amd64_main:20261021-e0ad82dd"),
             ("linux_amd64", ";parser_tools;python3;", f"{registry}/manylinux_2_28_amd64_main:20261021-e0ad82dd"),
             ("linux_arm64", ";rust;", f"{registry}/manylinux_2_28_aarch64_rust:20261021-e0ad82dd"),
+            # labels the inline image ignores don't force an inline build
+            ("linux_amd64", ";vcpkg;", f"{registry}/manylinux_2_28_amd64_main:20261021-e0ad82dd"),
+            ("linux_amd64", ";cmake;omp;openssl;rust;", f"{registry}/manylinux_2_28_amd64_rust:20261021-e0ad82dd"),
             ("linux_amd64_musl", ";rust;go;", f"{registry}/alpine_3_22_amd64_full:20261021-e0ad82dd"),
             ("linux_arm64_musl", ";multimedia;unixodbc;", f"{registry}/alpine_3_22_aarch64_full:20261021-e0ad82dd"),
         ]

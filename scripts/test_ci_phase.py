@@ -372,7 +372,7 @@ class CIPhaseTest(unittest.TestCase):
                 [
                     ["git", "clone", "--filter=blob:none", "duckdb/duckdb-fork", "duckdb"],
                     ["git", "-C", "duckdb", "fetch", "origin", "v1.2.3"],
-                    ["git", "-C", "duckdb", "checkout", "v1.2.3"],
+                    ["git", "-C", "duckdb", "checkout", "--detach", "FETCH_HEAD"],
                     ["git", "tag", "v2.0.0"],
                     ["make", "set_duckdb_tag"],
                 ],
@@ -412,7 +412,7 @@ class CIPhaseTest(unittest.TestCase):
                         "duckdb",
                     ],
                     ["git", "-C", "duckdb", "fetch", "origin", "v1.2.3"],
-                    ["git", "-C", "duckdb", "checkout", "v1.2.3"],
+                    ["git", "-C", "duckdb", "checkout", "--detach", "FETCH_HEAD"],
                 ],
             )
             runner.prebuilt.assert_called_once_with()
@@ -440,7 +440,7 @@ class CIPhaseTest(unittest.TestCase):
                         "https://github.com/duckdb/duckdb.git",
                     ],
                     ["git", "-C", "duckdb", "fetch", "origin", "v1.2.3"],
-                    ["git", "-C", "duckdb", "checkout", "v1.2.3"],
+                    ["git", "-C", "duckdb", "checkout", "--detach", "FETCH_HEAD"],
                 ],
             )
             runner.prebuilt.assert_called_once_with()

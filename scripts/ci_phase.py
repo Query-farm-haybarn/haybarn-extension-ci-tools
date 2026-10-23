@@ -141,6 +141,8 @@ class PhaseRunner:
         self.platform = self.required("CI_PLATFORM")
         self.architecture = self.required("DUCKDB_PLATFORM")
         self.workspace = Path(self.env.get("GITHUB_WORKSPACE", ".")).resolve()
+        # Haybarn: container path of sccache once create_docker_environment set it up.
+        self.docker_sccache = ""
         # Haybarn: derive the embedded engine version and the test-time
         # haybarn-cli from a haybarn-v* engine tag, unless the caller set them.
         versions = haybarn_engine_versions(self.value("DUCKDB_TAG") or self.value("DUCKDB_VERSION"))
@@ -258,7 +260,11 @@ class PhaseRunner:
             )
         if duckdb_ref:
             self.run(["git", "-C", "duckdb", "fetch", "origin", duckdb_ref])
-            self.run(["git", "-C", "duckdb", "checkout", duckdb_ref])
+            # Haybarn: check out what was fetched, not the name. Fetching one ref
+            # only writes FETCH_HEAD, so a Haybarn tag (haybarn-v2.0.0-rc5) has no
+            # local ref in an extension's own duckdb submodule, which was cloned
+            # from upstream DuckDB, and `checkout <tag>` fails there.
+            self.run(["git", "-C", "duckdb", "checkout", "--detach", "FETCH_HEAD"])
 
         duckdb_version = self.value("DUCKDB_VERSION") or self.value(
             "DUCKDB_COMMIT"
@@ -836,6 +842,7 @@ class PhaseRunner:
         }
         values.update(test_environment(self.value("CI_TEST_CONFIG", "{}")))
         sccache = self.install_sccache()
+        self.docker_sccache = sccache
         if sccache:
             # Haybarn: sccache and cargo's incremental mode are mutually exclusive.
             values.update(
@@ -899,7 +906,18 @@ class PhaseRunner:
         self.install_extra_vcpkg_dependencies(docker=True)
         docker = self.docker_arguments()
         self.run_with_retry([*docker, "make", "configure_ci", *self.make_overrides()])
-        self.run_with_retry([*docker, "make", self.required("CI_BUILD_TYPE")])
+        build = ["make", self.required("CI_BUILD_TYPE")]
+        if self.docker_sccache:
+            # Haybarn: the sccache server lives only as long as this container, so
+            # print its hit rate from the same container, after the build.
+            build = [
+                "sh",
+                "-c",
+                '"$@"; status=$?; "$RUSTC_WRAPPER" --show-stats || true; exit $status',
+                "sh",
+                *build,
+            ]
+        self.run_with_retry([*docker, *build])
         post_build = self.value("CI_POST_BUILD_COMMAND")
         if post_build:
             self.run(post_build, shell=True, extra_env={"MATRIX_RUNNER": self.value("CI_MATRIX_RUNNER")})

@@ -156,6 +156,20 @@ class PhaseRunner:
     def duckdb_ref(self) -> str:
         return self.value("DUCKDB_COMMIT") or self.value("DUCKDB_VERSION")
 
+    def build_duckdb_version(self) -> str:
+        """DUCKDB_VERSION as the engine build sees it.
+
+        Haybarn: DuckDB's CMakeLists.txt takes $ENV{DUCKDB_VERSION} ahead of
+        OVERRIDE_GIT_DESCRIBE, so a haybarn-vX.Y.Z[-rcN] tag would be stamped into
+        the extension as its engine version, and the released engine (vX.Y.Z)
+        refuses to load it. Pass the engine's version instead; the tag stays the
+        checkout ref and the artifact/cache name.
+        """
+        version = self.value("DUCKDB_VERSION")
+        if haybarn_engine_versions(version) is not None:
+            return self.value("OVERRIDE_GIT_DESCRIBE") or version
+        return version
+
     def required(self, name: str) -> str:
         value = self.value(name)
         if not value:
@@ -642,7 +656,7 @@ class PhaseRunner:
     def build_environment(self) -> dict[str, str]:
         is_rtools = self.architecture in {"windows_amd64_rtools", "windows_amd64_mingw"}
         return {
-            "DUCKDB_VERSION": self.value("DUCKDB_VERSION"),
+            "DUCKDB_VERSION": self.build_duckdb_version(),
             "DUCKDB_COMMIT": self.value("DUCKDB_COMMIT"),
             "DUCKDB_PLATFORM": self.architecture,
             "DUCKDB_PLATFORM_RTOOLS": "1" if is_rtools else "0",
@@ -810,7 +824,7 @@ class PhaseRunner:
             "OPENSSL_ROOT_DIR": f"/duckdb_build_dir/build/{self.value('CI_BUILD_TYPE')}/vcpkg_installed/{self.value('VCPKG_TARGET_TRIPLET')}",
             "OPENSSL_DIR": f"/duckdb_build_dir/build/{self.value('CI_BUILD_TYPE')}/vcpkg_installed/{self.value('VCPKG_TARGET_TRIPLET')}",
             "OPENSSL_USE_STATIC_LIBS": "true",
-            "DUCKDB_VERSION": self.value("DUCKDB_VERSION"),
+            "DUCKDB_VERSION": self.build_duckdb_version(),
             "DUCKDB_COMMIT": self.value("DUCKDB_COMMIT"),
             "DUCKDB_PLATFORM": self.architecture,
             "DUCKDB_GIT_VERSION": self.duckdb_ref(),

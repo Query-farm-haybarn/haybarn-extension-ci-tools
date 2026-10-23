@@ -301,6 +301,11 @@ class CIPhaseTest(unittest.TestCase):
             docker_environment = Path(directory, "docker_env.txt").read_text(encoding="utf-8")
             self.assertIn("OVERRIDE_GIT_DESCRIBE=v2.0.0\n", docker_environment)
             self.assertIn("DUCKDB_TEST_VERSION=2.0.0rc1\n", docker_environment)
+            # CMake prefers $ENV{DUCKDB_VERSION}: the build sees the engine version,
+            # the checkout keeps the tag.
+            self.assertIn("DUCKDB_VERSION=v2.0.0\n", docker_environment)
+            self.assertEqual(runner.build_environment()["DUCKDB_VERSION"], "v2.0.0")
+            self.assertEqual(runner.duckdb_ref(), "haybarn-v2.0.0-rc1")
 
             runner.commands.clear()
             runner.env["CI_LINUX_NATIVE_CONTAINER"] = "true"

@@ -817,6 +817,19 @@ jobs:
             echo "VCPKG_OVERLAY_TRIPLETS=$GITHUB_WORKSPACE/extension-ci-tools/toolchains"
           } >> "$GITHUB_ENV"
 
+      # Haybarn: actions/cache rather than ccache-action, which would install apt's ccache and
+      # configure a cache dir that the image's CCACHE_DIR overrides. Restored before wasm-toolchain,
+      # which zeroes the restored stats so `ccache -s` counts this job only.
+      - name: Setup / Ccache
+        id: ccache-restore
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: .ccache
+          key: ccache-image-extension-distribution-${{ matrix.duckdb_arch }}-${{ steps.prepare_sources.outputs.duckdb_version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ccache-image-extension-distribution-${{ matrix.duckdb_arch }}-${{ steps.prepare_sources.outputs.duckdb_version }}-
+            ccache-image-extension-distribution-${{ matrix.duckdb_arch }}-
+
       # Haybarn: emscripten comes from the container image (no setup-emsdk).
       - name: Setup / Emscripten check, ccache
         uses: ./extension-ci-tools/.github/actions/wasm-toolchain
@@ -857,18 +870,6 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: '1.23'
-
-      # Haybarn: actions/cache rather than ccache-action, which would install apt's ccache and
-      # configure a cache dir that the image's CCACHE_DIR overrides.
-      - name: Setup / Ccache
-        id: ccache-restore
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
-        with:
-          path: .ccache
-          key: ccache-image-extension-distribution-${{ matrix.duckdb_arch }}-${{ steps.prepare_sources.outputs.duckdb_version }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            ccache-image-extension-distribution-${{ matrix.duckdb_arch }}-${{ steps.prepare_sources.outputs.duckdb_version }}-
-            ccache-image-extension-distribution-${{ matrix.duckdb_arch }}-
 
       - name: Setup
         run: python3 extension-ci-tools/scripts/ci_phase.py setup

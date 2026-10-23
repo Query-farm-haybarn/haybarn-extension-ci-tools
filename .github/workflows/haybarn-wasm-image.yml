@@ -4,7 +4,8 @@
 #   * build.yml, as the engine's haybarn-extensions.yml calls it (the smoke group), and
 #   * _extension_distribution.yml, as the build-forks call it (httpfs, haybarn-2.0),
 #
-# wasm_eh + wasm_threads only. Runs on pushes to haybarn-2.0 that touch those workflows or the
+# wasm_eh + wasm_threads only. Runs on pushes to haybarn-2.0 and wasm2/* scratch branches that touch
+# those workflows or the
 # wasm-toolchain action, i.e. before the engine and the build-forks re-pin ci-tools. (A dispatch
 # would use the default branch's file, which does not exist there.)
 name: Haybarn wasm image
@@ -13,6 +14,7 @@ on:
   push:
     branches:
       - haybarn-2.0
+      - 'wasm2/**'
     paths:
       - '.github/workflows/build.yml'
       - '.github/workflows/_extension_distribution.yml'

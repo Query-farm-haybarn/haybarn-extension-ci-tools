@@ -1,0 +1,61 @@
+# Haybarn: first step of a wasm build job that runs in the Haybarn wasm build image
+# (ghcr.io/query-farm-haybarn/haybarn-wasm-{base,rust}, `container:` in build.yml and
+# _extension_distribution.yml), the image haybarn-wasm 2.0 builds its bundles in, so the side
+# modules built here and the main module that loads them come from the same emscripten.
+#
+#   * Fails unless emcc on PATH is the image's emsdk at the version the image declares
+#     (HAYBARN_EMSCRIPTEN_VERSION). The image is the only place the emscripten version is set.
+#   * Points ccache at <workspace>/.ccache (cached by the job with actions/cache) with the
+#     workspace as base dir; the image's defaults (/ccache_dir, an anonymous volume, and
+#     /duckdb_build_dir) are for `docker run -v` callers. github.workspace is the host path in a
+#     container job, so this uses $GITHUB_WORKSPACE. The R2 remote cache comes from the
+#     workflow's CCACHE_REMOTE_STORAGE (ccache 4.13.6 in the image does the bearer auth); its
+#     value carries the token and is never printed.
+
+name: 'Haybarn wasm toolchain'
+description: 'Check the image emscripten and set up ccache in a wasm container job.'
+
+inputs:
+  max-size:
+    description: 'ccache max_size'
+    default: '5G'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Check emscripten
+      shell: bash
+      run: |
+        set -euo pipefail
+        expected="${HAYBARN_EMSCRIPTEN_VERSION:-}"
+        if [ -z "$expected" ]; then
+          echo "::error::HAYBARN_EMSCRIPTEN_VERSION is not set: this job is not running in the Haybarn wasm build image"
+          exit 1
+        fi
+        emcc_path="$(command -v emcc || true)"
+        if [ "$emcc_path" != "$EMSDK/upstream/emscripten/emcc" ]; then
+          echo "::error::emcc resolves to '${emcc_path}', not the image's $EMSDK/upstream/emscripten/emcc"
+          exit 1
+        fi
+        banner="$(emcc --version | head -1)"
+        actual="$(grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' <<< "$banner" | head -1)"
+        echo "emcc $emcc_path: $banner"
+        if [ "$actual" != "$expected" ]; then
+          echo "::error::emcc reports $actual, the image declares $expected"
+          exit 1
+        fi
+
+    - name: Configure ccache
+      shell: bash
+      run: |
+        set -euo pipefail
+        {
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/.ccache"
+          echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE"
+          echo "CCACHE_MAXSIZE=${{ inputs.max-size }}"
+          echo "HAYBARN_CCACHE_START=$(date +%s)"
+        } >> "$GITHUB_ENV"
+        mkdir -p "$GITHUB_WORKSPACE/.ccache"
+        CCACHE_DIR="$GITHUB_WORKSPACE/.ccache" ccache -z > /dev/null
+        echo "$(ccache --version | head -1); cache_dir=$GITHUB_WORKSPACE/.ccache base_dir=$GITHUB_WORKSPACE"
+        if [ -n "${CCACHE_REMOTE_STORAGE:-}" ]; then echo "remote storage: configured"; else echo "remote storage: none"; fi

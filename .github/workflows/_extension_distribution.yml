@@ -227,9 +227,9 @@ on:
         default: 30
       # Haybarn 1.5 inputs, accepted so 1.5-era callers keep starting; the 2.0
       # workflow ignores them. matrix_parse_script was replaced by extbuild.
-      # The prebuilt GHCR images (haybarn-linux_*-<variant>, haybarn-wasm-*)
-      # are not published for 2.0 yet: Linux builds the ci-tools Docker image
-      # inline and wasm installs emsdk on the runner, as upstream does.
+      # use_prebuilt_images / use_prebuilt_wasm_image / wasm_image_variant are
+      # ignored too: Linux pulls haybarn-ci images (haybarn_image_version), and
+      # the wasm job always runs in the pinned haybarn-wasm-{base,rust} image.
       matrix_parse_script:
         required: false
         type: string
@@ -733,6 +733,11 @@ jobs:
   wasm:
     name: ${{ matrix.duckdb_arch }}
     runs-on: ${{ startsWith(matrix.runner, '[') && fromJSON(matrix.runner) || matrix.runner }}
+    # Haybarn: the wasm build image haybarn-wasm 2.0 builds its bundles in, so these side modules and
+    # the main module that loads them share one emscripten (the image sets the version; the
+    # wasm-toolchain action checks it). Pinned by digest (haybarn-wasm-{base,rust}:v2.0.0-2), published by publish-build-images.yml.
+    container:
+      image: ${{ (inputs.enable_rust || contains(format(';{0};', inputs.extra_toolchains), ';rust;')) && 'ghcr.io/query-farm-haybarn/haybarn-wasm-rust@sha256:ae0fceaa9a18f7361230a8189283fadeffd03857694f959ff1a4b1b0d1bf0113' || 'ghcr.io/query-farm-haybarn/haybarn-wasm-base@sha256:3c841479b14f1337b4711952896066a98a41fed78615ebac9678d41bc98c7f5b' }}
     needs:
       - generate_matrix
       - linux
@@ -757,10 +762,9 @@ jobs:
       EMCC_CFLAGS: -sDEFAULT_TO_CXX -Wno-unused-command-line-argument
       VCPKG_TARGET_TRIPLET: ${{ matrix.vcpkg_target_triplet }}
       VCPKG_HOST_TRIPLET: ${{ matrix.vcpkg_host_triplet }}
-      VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+      # Haybarn: VCPKG_TOOLCHAIN_PATH / VCPKG_OVERLAY_* are set by "Setup / Container paths":
+      # github.workspace is the host path in a container job.
       USE_MERGED_VCPKG_MANIFEST: ${{ inputs.use_merged_vcpkg_manifest }}
-      VCPKG_OVERLAY_PORTS: ${{ github.workspace }}/extension-ci-tools/vcpkg_ports
-      VCPKG_OVERLAY_TRIPLETS: ${{ github.workspace }}/extension-ci-tools/toolchains
       AWS_ACCESS_KEY_ID: ${{ secrets.VCPKG_CACHING_AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.VCPKG_CACHING_AWS_SECRET_ACCESS_KEY }}
       AWS_ENDPOINT_URL: ${{ secrets.VCPKG_CACHING_AWS_ENDPOINT_URL }}
@@ -804,11 +808,18 @@ jobs:
         id: prepare_sources
         run: python3 extension-ci-tools/scripts/ci_phase.py checkout
 
-      - name: Setup / Emscripten
-        uses: emscripten-core/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
-        with:
-          # Haybarn: 6.0.13 (upstream 6.0.9); keep in step with haybarn-wasm 2.0.
-          version: 6.0.13
+      - name: Setup / Container paths
+        shell: bash
+        run: |
+          {
+            echo "VCPKG_TOOLCHAIN_PATH=$GITHUB_WORKSPACE/vcpkg/scripts/buildsystems/vcpkg.cmake"
+            echo "VCPKG_OVERLAY_PORTS=$GITHUB_WORKSPACE/extension-ci-tools/vcpkg_ports"
+            echo "VCPKG_OVERLAY_TRIPLETS=$GITHUB_WORKSPACE/extension-ci-tools/toolchains"
+          } >> "$GITHUB_ENV"
+
+      # Haybarn: emscripten comes from the container image (no setup-emsdk).
+      - name: Setup / Emscripten check, ccache
+        uses: ./extension-ci-tools/.github/actions/wasm-toolchain
 
       - name: Setup / Rust
         if: ${{ (inputs.enable_rust || contains(format(';{0};', inputs.extra_toolchains), ';rust;')) && matrix.duckdb_arch == 'wasm_mvp' }}
@@ -847,36 +858,37 @@ jobs:
         with:
           go-version: '1.23'
 
+      # Haybarn: actions/cache rather than ccache-action, which would install apt's ccache and
+      # configure a cache dir that the image's CCACHE_DIR overrides.
       - name: Setup / Ccache
-        uses: hendrikmuhs/ccache-action@d62db5f07c26379fc4b4e0916f098a92573c3b03 # v1.2.23
-        continue-on-error: true
+        id: ccache-restore
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
-          max-size: 5GB
-          evict-old-files: job
-          key: extension-distribution-${{ matrix.duckdb_arch }}-${{ steps.prepare_sources.outputs.duckdb_version }}
+          path: .ccache
+          key: ccache-image-extension-distribution-${{ matrix.duckdb_arch }}-${{ steps.prepare_sources.outputs.duckdb_version }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            ccache-extension-distribution-${{ matrix.duckdb_arch }}-${{ steps.prepare_sources.outputs.duckdb_version }}
-            extension-distribution-${{ matrix.duckdb_arch }}-
-            ccache-extension-distribution-${{ matrix.duckdb_arch }}-
-          save: ${{ inputs.save_cache }}
-
-      # Haybarn: as on Windows, ccache-action's apt ccache (4.9.1) cannot upload
-      # to the bearer-token R2 cache; use the upstream 4.13.6 static binary.
-      - name: Setup / Ccache 4.13.6
-        shell: bash
-        run: |
-          CCACHE_VERSION=4.13.6
-          curl -fsSL "https://github.com/ccache/ccache/releases/download/v${CCACHE_VERSION}/ccache-${CCACHE_VERSION}-linux-x86_64-musl-static.tar.xz" -o "$RUNNER_TEMP/ccache.tar.xz"
-          mkdir -p "$RUNNER_TEMP/ccache-bin"
-          tar -xJf "$RUNNER_TEMP/ccache.tar.xz" -C "$RUNNER_TEMP/ccache-bin" --strip-components=1 "ccache-${CCACHE_VERSION}-linux-x86_64-musl-static/ccache"
-          echo "$RUNNER_TEMP/ccache-bin" >> "$GITHUB_PATH"
-          "$RUNNER_TEMP/ccache-bin/ccache" --version | head -1
+            ccache-image-extension-distribution-${{ matrix.duckdb_arch }}-${{ steps.prepare_sources.outputs.duckdb_version }}-
+            ccache-image-extension-distribution-${{ matrix.duckdb_arch }}-
 
       - name: Setup
         run: python3 extension-ci-tools/scripts/ci_phase.py setup
 
       - name: Build
         run: python3 extension-ci-tools/scripts/ci_phase.py build
+
+      - name: Ccache stats
+        if: ${{ !cancelled() }}
+        run: |
+          ccache -s -v
+          # As ccache-action's evict-old-files: job, keep only what this job used.
+          ccache --evict-older-than "$(( $(date +%s) - HAYBARN_CCACHE_START + 60 ))s"
+
+      - name: Ccache save
+        if: ${{ !cancelled() && inputs.save_cache }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: .ccache
+          key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
 
       - name: Test
         timeout-minutes: ${{ inputs.test_timeout_minutes }}

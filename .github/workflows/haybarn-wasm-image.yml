@@ -1,0 +1,87 @@
+# Haybarn 2.0: builds extension .wasm files in the pinned wasm build image through both reusable
+# workflows that have a wasm job, as their callers use them:
+#
+#   * build.yml, as the engine's haybarn-extensions.yml calls it (the smoke group), and
+#   * _extension_distribution.yml, as the build-forks call it (httpfs, haybarn-2.0),
+#
+# wasm_eh + wasm_threads only. Runs on pushes to haybarn-2.0 that touch those workflows or the
+# wasm-toolchain action, i.e. before the engine and the build-forks re-pin ci-tools. (A dispatch
+# would use the default branch's file, which does not exist there.)
+name: Haybarn wasm image
+
+on:
+  push:
+    branches:
+      - haybarn-2.0
+    paths:
+      - '.github/workflows/build.yml'
+      - '.github/workflows/_extension_distribution.yml'
+      - '.github/workflows/haybarn-wasm-image.yml'
+      - '.github/actions/wasm-toolchain/**'
+
+permissions:
+  actions: read
+  contents: read
+  packages: read
+
+concurrency:
+  group: haybarn-wasm-image-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The engine release the build-forks build against.
+  HAYBARN_ENGINE_TAG: haybarn-v2.0.0-rc5
+
+jobs:
+  engine:
+    name: Resolve the engine
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.resolve.outputs.commit }}
+    steps:
+      - id: resolve
+        run: |
+          set -euo pipefail
+          commit=$(git ls-remote https://github.com/Query-farm-haybarn/haybarn "refs/tags/${HAYBARN_ENGINE_TAG}^{}" | cut -f1)
+          test -n "$commit"
+          echo "${HAYBARN_ENGINE_TAG} -> ${commit}"
+          echo "commit=${commit}" >> "$GITHUB_OUTPUT"
+
+  build-yml:
+    name: build.yml
+    needs: engine
+    uses: ./.github/workflows/build.yml
+    with:
+      duckdb_version: v2.0.0
+      duckdb_commit: ${{ needs.engine.outputs.commit }}
+      ci_tools_version: ${{ github.sha }}
+      ci_tools_repository: ${{ github.repository }}
+      duckdb_repository: Query-farm-haybarn/haybarn
+      extension_repository: duckdb/extension-template
+      extension_ref: main
+      groups: |
+        haybarn-2-0:
+          config: duckdb/.github/config/haybarn_extensions_next_2_0.cmake
+          toolchain: main
+      reduced_ci_mode: disabled
+      exclude_archs: linux_amd64;linux_arm64;linux_amd64_musl;linux_arm64_musl;osx_amd64;osx_arm64;windows_amd64;windows_arm64;windows_amd64_mingw;windows_amd64_rtools;wasm_mvp
+      prebuilt_source: disabled
+      save_cache: true
+      skip_tests: true
+    secrets:
+      vcpkg_token: ${{ secrets.HAYBARN_VCPKG_TOKEN }}
+
+  distribution:
+    name: _extension_distribution.yml
+    uses: ./.github/workflows/_extension_distribution.yml
+    secrets:
+      vcpkg_token: ${{ secrets.HAYBARN_VCPKG_TOKEN }}
+    with:
+      extension_name: httpfs
+      override_repository: Query-farm-haybarn/haybarn-httpfs
+      override_ref: haybarn-2.0
+      duckdb_version: haybarn-v2.0.0-rc5
+      ci_tools_version: ${{ github.sha }}
+      override_duckdb_repository: 'https://github.com/Query-farm-haybarn/haybarn'
+      override_ci_tools_repository: ${{ github.repository }}
+      exclude_archs: linux_amd64;linux_arm64;linux_amd64_musl;linux_arm64_musl;osx_amd64;osx_arm64;windows_amd64;windows_arm64;windows_amd64_mingw;wasm_mvp

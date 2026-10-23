@@ -536,6 +536,11 @@ jobs:
     needs: matrix
     if: ${{ needs.matrix.outputs.build_wasm != '' }}
     runs-on: ${{ matrix.runner }}
+    # Haybarn: the wasm build image haybarn-wasm 2.0 builds its bundles in, so these side modules and
+    # the main module that loads them share one emscripten (the image sets the version; the
+    # wasm-toolchain action checks it). Pinned by digest (haybarn-wasm-{base,rust}:v2.0.0-2), published by publish-build-images.yml.
+    container:
+      image: ${{ matrix.toolchain == 'rust' && 'ghcr.io/query-farm-haybarn/haybarn-wasm-rust@sha256:ae0fceaa9a18f7361230a8189283fadeffd03857694f959ff1a4b1b0d1bf0113' || 'ghcr.io/query-farm-haybarn/haybarn-wasm-base@sha256:3c841479b14f1337b4711952896066a98a41fed78615ebac9678d41bc98c7f5b' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.matrix.outputs.build_wasm) }}
@@ -585,28 +590,25 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.11"
-      - name: Setup Emscripten
-        uses: emscripten-core/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
-        with:
-          # Haybarn: 6.0.13 (upstream 6.0.9); keep in step with haybarn-wasm 2.0.
-          version: 6.0.13
+      # Haybarn: emscripten comes from the container image (no setup-emsdk).
+      - name: Check emscripten, configure ccache
+        uses: ./extension-ci-tools/.github/actions/wasm-toolchain
       - name: Setup Rust
         if: ${{ matrix.toolchain == 'rust' }}
         uses: dtolnay/rust-toolchain@4d407b29186a635f0cc27475ef0bc0ae605a8866 # 1.86.0
         with:
           targets: wasm32-unknown-emscripten
-      - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@d62db5f07c26379fc4b4e0916f098a92573c3b03 # v1.2.23
-        continue-on-error: true
+      # Haybarn: actions/cache rather than ccache-action, which would install apt's ccache and
+      # configure a cache dir that the image's CCACHE_DIR overrides.
+      - name: Restore ccache
+        id: ccache-restore
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
-          max-size: 5GB
-          evict-old-files: job
-          key: build-${{ matrix.artifact_name }}-${{ needs.matrix.outputs.duckdb_version }}
+          path: .ccache
+          key: ccache-image-build-${{ matrix.artifact_name }}-${{ needs.matrix.outputs.duckdb_version }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            ccache-build-${{ matrix.artifact_name }}-${{ needs.matrix.outputs.duckdb_version }}
-            build-${{ matrix.artifact_name }}-
-            ccache-build-${{ matrix.artifact_name }}-
-          save: ${{ inputs.save_cache }}
+            ccache-image-build-${{ matrix.artifact_name }}-${{ needs.matrix.outputs.duckdb_version }}-
+            ccache-image-build-${{ matrix.artifact_name }}-
       - name: Configure
         run: python3 extension-ci-tools/scripts/ci_phase.py setup
       - name: Build
@@ -617,6 +619,18 @@ jobs:
           vcpkg-commit: ${{ inputs.vcpkg_commit }}
           save-cache: ${{ inputs.save_cache }}
           cache-suffix: ${{ matrix.group_name }}-${{ matrix.container_name || matrix.duckdb_arch }}
+      - name: ccache stats
+        if: ${{ !cancelled() }}
+        run: |
+          ccache -s -v
+          # As ccache-action's evict-old-files: job, keep only what this job used.
+          ccache --evict-older-than "$(( $(date +%s) - HAYBARN_CCACHE_START + 60 ))s"
+      - name: Save ccache
+        if: ${{ !cancelled() && inputs.save_cache }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: .ccache
+          key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
       - name: Prepare extension artifact
         id: artifact
         run: python3 extension-ci-tools/scripts/ci_phase.py upload

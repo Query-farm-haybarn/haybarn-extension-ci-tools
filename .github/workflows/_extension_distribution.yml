@@ -225,6 +225,12 @@ on:
         required: false
         type: number
         default: 30
+      # Haybarn: whole-job limit for each platform build, so a hung build
+      # frees its runner instead of holding it for GitHub's 6-hour default.
+      job_timeout_minutes:
+        required: false
+        type: number
+        default: 45
       # Haybarn 1.5 inputs, accepted so 1.5-era callers keep starting; the 2.0
       # workflow ignores them. matrix_parse_script was replaced by extbuild.
       # use_prebuilt_images / use_prebuilt_wasm_image / wasm_image_variant are
@@ -370,6 +376,7 @@ jobs:
 
   linux:
     name: ${{ matrix.duckdb_arch }}
+    timeout-minutes: ${{ inputs.job_timeout_minutes }}
     continue-on-error: ${{ contains(format(';{0};', inputs.allow_failure_archs), format(';{0};', matrix.duckdb_arch)) }}
     runs-on: ${{ startsWith(matrix.runner, '[') && fromJSON(matrix.runner) || matrix.runner }}
     needs: generate_matrix
@@ -481,6 +488,7 @@ jobs:
 
   macos:
     name: ${{ matrix.duckdb_arch }}
+    timeout-minutes: ${{ inputs.job_timeout_minutes }}
     runs-on: ${{ startsWith(matrix.runner, '[') && fromJSON(matrix.runner) || matrix.runner }}
     # Haybarn: not gated on the Linux legs, so every platform builds at once (1.5: 5d8bb77).
     needs:
@@ -601,6 +609,7 @@ jobs:
 
   windows:
     name: ${{ matrix.duckdb_arch }}
+    timeout-minutes: ${{ inputs.job_timeout_minutes }}
     runs-on: ${{ startsWith(matrix.runner, '[') && fromJSON(matrix.runner) || matrix.runner }}
     # Haybarn: not gated on the Linux legs, so every platform builds at once (1.5: 5d8bb77).
     needs:
@@ -760,6 +769,7 @@ jobs:
 
   wasm:
     name: ${{ matrix.duckdb_arch }}
+    timeout-minutes: ${{ inputs.job_timeout_minutes }}
     runs-on: ${{ startsWith(matrix.runner, '[') && fromJSON(matrix.runner) || matrix.runner }}
     # Haybarn: the wasm build image haybarn-wasm 2.0 builds its bundles in, so these side modules and
     # the main module that loads them share one emscripten (the image sets the version; the

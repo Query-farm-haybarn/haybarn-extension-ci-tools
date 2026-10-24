@@ -450,12 +450,12 @@ class PhaseRunner:
         if vendored:
             print(f"Initialising extension submodules at depth 1: {' '.join(vendored)}", flush=True)
             try:
-                self.run([*git, "submodule", "update", "--init", "--recursive", "--depth", "1", "--", *vendored])
+                self.run([*git, "submodule", "update", "--init", "--recursive", "--depth", "1", "--jobs", "8", "--", *vendored])
             except subprocess.CalledProcessError:
                 # A server that refuses fetching the pinned commit by SHA.
                 print("Shallow submodule update failed; retrying at full depth", flush=True)
                 self.run([*git, "submodule", "foreach", "--recursive", "git fetch --unshallow || true"])
-                self.run([*git, "submodule", "update", "--init", "--recursive", "--", *vendored])
+                self.run([*git, "submodule", "update", "--init", "--recursive", "--jobs", "8", "--", *vendored])
         if engine:
             # Kept with history: the existing-checkout path fetches the ref into it.
             self.run([*git, "submodule", "update", "--init", "--recursive", "--", *engine])

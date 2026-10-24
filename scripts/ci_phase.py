@@ -424,15 +424,26 @@ class PhaseRunner:
         artifact_root.mkdir(parents=True, exist_ok=True)
         destination = artifact_root / artifact_name
         temporary = destination.with_name(f".{destination.name}.part")
-        try:
-            with self._open_prebuilt_url(artifact_url) as response:
-                with temporary.open("wb") as target:
-                    shutil.copyfileobj(response, target)
-            temporary.replace(destination)
-        except (OSError, urllib.error.URLError) as error:
-            temporary.unlink(missing_ok=True)
-            self._prebuilt_cache_miss(artifact_url, error)
-            return False
+        # Haybarn: a dropped connection can end the body early without an HTTP error
+        # (seen as "Compressed file ended before the end-of-stream marker" when the build
+        # opened the archive), so read the archive through before using it, and retry.
+        attempts = 3
+        for attempt in range(1, attempts + 1):
+            try:
+                with self._open_prebuilt_url(artifact_url) as response:
+                    with temporary.open("wb") as target:
+                        shutil.copyfileobj(response, target)
+                with tarfile.open(temporary, "r:gz") as bundle:
+                    for _ in bundle:
+                        pass
+                temporary.replace(destination)
+                break
+            except (OSError, EOFError, tarfile.TarError, urllib.error.URLError) as error:
+                temporary.unlink(missing_ok=True)
+                if attempt == attempts:
+                    self._prebuilt_cache_miss(artifact_url, error)
+                    return False
+                print(f"Prebuilt DuckDB download attempt {attempt} failed ({error}); retrying.", flush=True)
 
         print(f"Using prebuilt DuckDB archive: {artifact_url}", flush=True)
         self.set_environment("CI_PREBUILT_DUCKDB_ARTIFACT", artifact_name)

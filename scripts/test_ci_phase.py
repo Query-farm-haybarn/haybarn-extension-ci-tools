@@ -28,6 +28,16 @@ from ci_phase import (  # noqa: E402
 )
 
 
+def small_tar_gz() -> bytes:
+    payload = io.BytesIO()
+    with tarfile.open(fileobj=payload, mode="w:gz") as bundle:
+        data = b"archive contents"
+        info = tarfile.TarInfo("static-libs/README")
+        info.size = len(data)
+        bundle.addfile(info, io.BytesIO(data))
+    return payload.getvalue()
+
+
 class RecordingRunner(PhaseRunner):
     def __init__(self, environ):
         super().__init__(environ)
@@ -607,7 +617,7 @@ class CIPhaseTest(unittest.TestCase):
                 "_open_prebuilt_url",
                 side_effect=[
                     io.BytesIO(b"v2.0.0-alpha46057\n"),
-                    io.BytesIO(b"archive contents"),
+                    io.BytesIO(small_tar_gz()),
                 ],
             ) as open_url:
                 fetched = runner.prebuilt()
@@ -616,7 +626,7 @@ class CIPhaseTest(unittest.TestCase):
             artifact_name = "matrix-static-libs.tar.gz"
             artifact_root = workspace / ".ci" / "prebuilt-duckdb" / "linux_amd64"
             self.assertEqual(
-                (artifact_root / artifact_name).read_bytes(), b"archive contents"
+                (artifact_root / artifact_name).read_bytes(), small_tar_gz()
             )
             self.assertEqual(
                 runner.env["CI_PREBUILT_DUCKDB_ARTIFACT"], artifact_name
@@ -670,7 +680,7 @@ class CIPhaseTest(unittest.TestCase):
             with mock.patch.object(
                 runner,
                 "_open_prebuilt_url",
-                side_effect=[io.BytesIO(b"v2.0.0-alpha46057\n"), missing],
+                side_effect=[io.BytesIO(b"v2.0.0-alpha46057\n"), missing, missing, missing],
             ):
                 fetched = runner.prebuilt()
             missing.close()
@@ -681,6 +691,26 @@ class CIPhaseTest(unittest.TestCase):
                 Path(directory) / ".ci" / "prebuilt-duckdb" / "linux_amd64"
             )
             self.assertEqual(list(artifact_root.iterdir()), [])
+
+    def test_fetch_prebuilt_duckdb_retries_a_truncated_archive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = RecordingRunner(self.environment(directory))
+            runner.captured_output = "b15358c371daf10dad799a43b6167f6ccdce84d8"
+            archive = small_tar_gz()
+            with mock.patch.object(
+                runner,
+                "_open_prebuilt_url",
+                side_effect=[
+                    io.BytesIO(b"v2.0.0-alpha46057\n"),
+                    io.BytesIO(archive[: len(archive) // 2]),
+                    io.BytesIO(archive),
+                ],
+            ):
+                self.assertTrue(runner.prebuilt())
+            artifact_root = Path(directory) / ".ci" / "prebuilt-duckdb" / "linux_amd64"
+            (downloaded,) = list(artifact_root.iterdir())
+            self.assertEqual(downloaded.read_bytes(), archive)
+            self.assertEqual(runner.env["CI_PREBUILT_DUCKDB_ARTIFACT"], downloaded.name)
 
     def test_fetch_prebuilt_duckdb_falls_back_on_network_error(self):
         with tempfile.TemporaryDirectory() as directory:

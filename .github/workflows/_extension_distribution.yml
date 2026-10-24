@@ -476,16 +476,15 @@ jobs:
   macos:
     name: ${{ matrix.duckdb_arch }}
     runs-on: ${{ startsWith(matrix.runner, '[') && fromJSON(matrix.runner) || matrix.runner }}
+    # Haybarn: not gated on the Linux legs, so every platform builds at once (1.5: 5d8bb77).
     needs:
       - generate_matrix
-      - linux
     if: |
       always() &&
       !cancelled() &&
       needs.generate_matrix.outputs.osx_matrix != '{}' &&
       needs.generate_matrix.outputs.osx_matrix != '' &&
-      needs.generate_matrix.result == 'success' &&
-      (inputs.reduced_ci_mode == 'disabled' || needs.linux.result == 'success' || needs.linux.result == 'skipped')
+      needs.generate_matrix.result == 'success'
     strategy:
       fail-fast: ${{ inputs.reduced_ci_mode != 'disabled' }}
       matrix: ${{ fromJson(needs.generate_matrix.outputs.osx_matrix) }}
@@ -593,16 +592,15 @@ jobs:
   windows:
     name: ${{ matrix.duckdb_arch }}
     runs-on: ${{ startsWith(matrix.runner, '[') && fromJSON(matrix.runner) || matrix.runner }}
+    # Haybarn: not gated on the Linux legs, so every platform builds at once (1.5: 5d8bb77).
     needs:
       - generate_matrix
-      - linux
     if: |
       always() &&
       !cancelled() &&
       needs.generate_matrix.outputs.windows_matrix != '{}' &&
       needs.generate_matrix.outputs.windows_matrix != '' &&
-      needs.generate_matrix.result == 'success' &&
-      (inputs.reduced_ci_mode == 'disabled' || needs.linux.result == 'success' || needs.linux.result == 'skipped')
+      needs.generate_matrix.result == 'success'
     strategy:
       fail-fast: ${{ inputs.reduced_ci_mode != 'disabled' }}
       matrix: ${{ fromJson(needs.generate_matrix.outputs.windows_matrix) }}
@@ -754,16 +752,15 @@ jobs:
     # wasm-toolchain action checks it). Pinned by digest (haybarn-wasm-{base,rust}:v2.0.0-2), published by publish-build-images.yml.
     container:
       image: ${{ (inputs.enable_rust || contains(format(';{0};', inputs.extra_toolchains), ';rust;')) && 'ghcr.io/query-farm-haybarn/haybarn-wasm-rust@sha256:ae0fceaa9a18f7361230a8189283fadeffd03857694f959ff1a4b1b0d1bf0113' || 'ghcr.io/query-farm-haybarn/haybarn-wasm-base@sha256:3c841479b14f1337b4711952896066a98a41fed78615ebac9678d41bc98c7f5b' }}
+    # Haybarn: not gated on the Linux legs, so every platform builds at once (1.5: 5d8bb77).
     needs:
       - generate_matrix
-      - linux
     if: |
       always() &&
       !cancelled() &&
       needs.generate_matrix.outputs.wasm_matrix != '{}' &&
       needs.generate_matrix.outputs.wasm_matrix != '' &&
-      needs.generate_matrix.result == 'success' &&
-      (inputs.reduced_ci_mode == 'disabled' || needs.linux.result == 'success' || needs.linux.result == 'skipped')
+      needs.generate_matrix.result == 'success'
     strategy:
       fail-fast: ${{ inputs.reduced_ci_mode != 'disabled' }}
       matrix: ${{ fromJson(needs.generate_matrix.outputs.wasm_matrix) }}

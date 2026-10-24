@@ -232,6 +232,13 @@ WASM_COMPILE_TIME_COMMON_FLAGS=-DWASM_LOADABLE_EXTENSIONS=1 -DBUILD_EXTENSIONS_O
 WASM_CXX_MVP_FLAGS=
 WASM_CXX_EH_FLAGS=$(WASM_CXX_MVP_FLAGS) -fwasm-exceptions -DWEBDB_FAST_EXCEPTIONS=1
 WASM_CXX_THREADS_FLAGS=$(WASM_CXX_EH_FLAGS) -DWITH_WASM_THREADS=1 -DWITH_WASM_SIMD=1 -DWITH_WASM_BULK_MEMORY=1 -pthread
+# Haybarn: the side-module link (extension_build_tools.cmake's POST_BUILD `emcc ... -sSIDE_MODULE=2`)
+# gets no EH flag, so for an extension compiled with -flto (dplyr) wasm-ld's LTO codegen runs in
+# legacy emscripten EH/SjLj mode and fails on the native-EH bitcode ("relocation
+# R_WASM_MEMORY_ADDR_REL_SLEB is not supported against an undefined symbol GCC_except_table22").
+# EMCC_CFLAGS reaches every emcc call of the build, that link included; the eh/threads vcpkg
+# toolchains already compile and link their C/C++ with -fwasm-exceptions, as the engine does.
+WASM_EH_EMCC_CFLAGS=EMCC_CFLAGS="$${EMCC_CFLAGS:-} -fwasm-exceptions"
 
 wasm_pre_build_step:
 
@@ -251,7 +258,7 @@ wasm_eh: wasm_pre_build_step ${EXTENSION_CONFIG_STEP_WASM}
 	# configure/install above and before the link below. In an eh build all deps
 	# are native-EH, so the alias is semantically correct.
 	test -d build/wasm_eh/vcpkg_installed/wasm32-emscripten-eh && ln -sfn wasm32-emscripten-eh build/wasm_eh/vcpkg_installed/wasm32-emscripten || true
-	emmake make -j8 -Cbuild/wasm_eh
+	$(WASM_EH_EMCC_CFLAGS) emmake make -j8 -Cbuild/wasm_eh
 
 wasm_threads: wasm_pre_build_step ${EXTENSION_CONFIG_STEP_WASM}
 	mkdir -p ./build/wasm_threads
@@ -269,7 +276,7 @@ wasm_threads: wasm_pre_build_step ${EXTENSION_CONFIG_STEP_WASM}
 	# configure/install above and before the link below. In a threaded build all
 	# deps are threaded, so the alias is semantically correct.
 	test -d build/wasm_threads/vcpkg_installed/wasm32-emscripten-threads && ln -sfn wasm32-emscripten-threads build/wasm_threads/vcpkg_installed/wasm32-emscripten || true
-	emmake make -j8 -Cbuild/wasm_threads
+	$(WASM_EH_EMCC_CFLAGS) emmake make -j8 -Cbuild/wasm_threads
 
 
 ###### Extension config step

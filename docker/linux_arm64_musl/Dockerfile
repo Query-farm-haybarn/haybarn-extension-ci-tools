@@ -6,11 +6,20 @@ FROM alpine:3.22
 
 # Setup the basic necessities
 RUN apk update -q
-RUN apk add -qq ccache cmake git clang19 gcc libssl3 wget bash zip gettext unzip build-base curl make libffi-dev zlib openssh autoconf linux-headers libunwind-dev jq libtool tzdata-utils
+RUN apk add -qq xz cmake git clang19 gcc libssl3 wget bash zip gettext unzip build-base curl make libffi-dev zlib openssh autoconf linux-headers libunwind-dev jq libtool tzdata-utils
 RUN curl --no-progress-meter -LO https://dl-cdn.alpinelinux.org/alpine/v3.21/community/aarch64/aws-cli-2.22.10-r0.apk
 RUN apk add --allow-untrusted aws-cli-2.22.10-r0.apk
 RUN curl --no-progress-meter -LO https://dl-cdn.alpinelinux.org/alpine/v3.23/community/aarch64/ninja-build-1.13.2-r0.apk
 RUN apk add --allow-untrusted ninja-build-1.13.2-r0.apk
+
+# Haybarn: ccache 4.13.6 (musl-static) instead of Alpine's 4.11.3, which has no storage helpers and
+# so cannot use the https remote (CCACHE_REMOTE_STORAGE) the build passes in. Same as docker/linux_*.
+ARG CCACHE_VERSION=4.13.6
+RUN curl -fsSL "https://github.com/ccache/ccache/releases/download/v${CCACHE_VERSION}/ccache-${CCACHE_VERSION}-linux-aarch64-musl-static.tar.xz" -o /tmp/ccache.tar.xz && \
+    tar -xJf /tmp/ccache.tar.xz -C /tmp && \
+    install -m 0755 "/tmp/ccache-${CCACHE_VERSION}-linux-aarch64-musl-static/ccache" /usr/local/bin/ccache && \
+    rm -rf /tmp/ccache.tar.xz "/tmp/ccache-${CCACHE_VERSION}-linux-aarch64-musl-static" && \
+    ccache --version | head -1
 
 # Add ninja to path
 ENV PATH="/usr/lib/ninja-build/bin:${PATH}"

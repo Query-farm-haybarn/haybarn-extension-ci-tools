@@ -207,7 +207,10 @@ class CIPhaseTest(unittest.TestCase):
             ):
                 git(extension, "submodule", "add", "--quiet", url.as_uri(), path)
             git(extension / "third_party/library", "checkout", "--quiet", library_pin)
-            git(extension, "add", "third_party/library")
+            # A stale .gitmodules entry with no gitlink behind it.
+            with open(extension / ".gitmodules", "a") as gitmodules:
+                gitmodules.write(f'[submodule "stale"]\n\tpath = build/stale\n\turl = {inner.as_uri()}\n')
+            git(extension, "add", "third_party/library", ".gitmodules")
             git(extension, "commit", "--quiet", "-m", "submodules")
             git(extension, "tag", "v0.9.0", "HEAD~1")
             git(extension, "tag", "-a", "-m", "release", "v1.0.0")

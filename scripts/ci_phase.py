@@ -406,6 +406,19 @@ class PhaseRunner:
                 paths.append(parts[1].strip().strip("/"))
         return paths
 
+    def gitlink_paths(self) -> set[str]:
+        """Paths of the submodule commits (mode 160000) recorded in the index."""
+        try:
+            listing = self.capture(["git", "ls-files", "--stage"])
+        except subprocess.CalledProcessError:
+            return set()
+        paths = set()
+        for line in listing.splitlines():
+            meta, _, path = line.partition("\t")
+            if meta.startswith("160000 "):
+                paths.add(path.strip("/"))
+        return paths
+
     def prepare_extension(self) -> None:
         """Complete the workflow's shallow, submodule-free extension checkout.
 
@@ -423,7 +436,11 @@ class PhaseRunner:
         ).exists():
             replaced.add("duckdb")
         nested = set(self.nested_engine_submodule_paths())
-        declared = self.submodule_paths()
+        # Only declared paths that are gitlinks in the tree: .gitmodules can keep
+        # stale entries (dplyr: build/_deps/corrosion-src), which a pathspec
+        # makes `git submodule update` reject; the recursive checkout skipped them.
+        gitlinks = self.gitlink_paths()
+        declared = [path for path in self.submodule_paths() if path in gitlinks]
         vendored = [path for path in declared if path not in replaced and path not in nested]
         engine = [path for path in vendored if path == "duckdb"]
         vendored = [path for path in vendored if path != "duckdb"]

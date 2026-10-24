@@ -6,7 +6,7 @@
 #
 # wasm_eh + wasm_threads only. Runs on pushes to haybarn-2.0 and wasm2/* scratch branches that touch
 # those workflows or the
-# wasm-toolchain action, i.e. before the engine and the build-forks re-pin ci-tools. (A dispatch
+# wasm-toolchain or cache-clients actions, i.e. before the engine and the build-forks re-pin ci-tools. (A dispatch
 # would use the default branch's file, which does not exist there.)
 name: Haybarn wasm image
 
@@ -20,6 +20,7 @@ on:
       - '.github/workflows/_extension_distribution.yml'
       - '.github/workflows/haybarn-wasm-image.yml'
       - '.github/actions/wasm-toolchain/**'
+      - '.github/actions/cache-clients/**'
 
 permissions:
   actions: read

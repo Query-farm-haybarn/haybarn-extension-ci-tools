@@ -202,7 +202,8 @@ jobs:
         with:
           repository: ${{ inputs.extension_repository != '' && inputs.extension_repository || github.repository }}
           ref: ${{ inputs.extension_ref }}
-          fetch-depth: 0
+          # Haybarn: only HEAD's duckdb gitlink is read below.
+          fetch-depth: 1
       - name: Resolve DuckDB version
         id: duckdb-version
         shell: bash

@@ -67,6 +67,12 @@ HAYBARN_IMAGE_VARIANTS = (
     ("rust", {"rust"}),
     ("full", {"rust", "go", "fortran", "multimedia"}),
 )
+# Haybarn: the extension checkout skips submodules, so actions/checkout's
+# ssh -> https rewrite for them is not configured; runners have no ssh key.
+GITHUB_HTTPS_REWRITES = ("git@github.com:", "ssh://git@github.com/", "git://github.com/")
+# Submodule paths an extension vendors that the build replaces: the Haybarn
+# engine checkout and the workflow's own extension-ci-tools checkout.
+ENGINE_SUBMODULE_NAMES = ("duckdb", "extension-ci-tools")
 # Haybarn engine release tags: haybarn-vX.Y.Z or haybarn-vX.Y.Z-rcN.
 HAYBARN_ENGINE_TAG_PATTERN = re.compile(r"^haybarn-(v[0-9]+\.[0-9]+\.[0-9]+)(-rc[0-9]+)?$")
 STAGED_DUCKDB_VERSION_PATTERN = re.compile(
@@ -263,29 +269,43 @@ class PhaseRunner:
         duckdb_repository = self.value("CI_DUCKDB_GIT_REPOSITORY")
         duckdb_ref = self.duckdb_ref()
         duckdb_directory = self.workspace / "duckdb"
-        if not duckdb_directory.is_dir():
+        if self.enabled("CI_INIT_EXTENSION_SUBMODULES"):
+            self.prepare_extension()
+        if not (duckdb_directory / ".git").exists():
+            # Haybarn: shallow. Nothing reads the engine's history: the build gets
+            # DUCKDB_VERSION (set below) and CMake takes the hash from `git log -1`.
+            # An empty duckdb/ is the placeholder of an extension's own engine
+            # submodule that prepare_extension left uninitialised.
+            if duckdb_directory.is_symlink() or duckdb_directory.is_file():
+                duckdb_directory.unlink()
+            elif duckdb_directory.is_dir():
+                print("Replacing duckdb/ (not a git checkout) with the engine", flush=True)
+                shutil.rmtree(duckdb_directory)
+            self.run(["git", "init", "--quiet", "duckdb"])
             self.run(
                 [
                     "git",
-                    "clone",
-                    # Haybarn: blobless - every commit and tag (git describe still
-                    # works) but only the checked-out tree's file contents.
-                    "--filter=blob:none",
-                    duckdb_repository or DEFAULT_DUCKDB_GIT_REPOSITORY,
+                    "-C",
                     "duckdb",
+                    "remote",
+                    "add",
+                    "origin",
+                    duckdb_repository or DEFAULT_DUCKDB_GIT_REPOSITORY,
                 ]
             )
-        elif duckdb_repository:
-            self.run(
-                ["git", "-C", "duckdb", "remote", "set-url", "origin", duckdb_repository]
-            )
-        if duckdb_ref:
-            self.run(["git", "-C", "duckdb", "fetch", "origin", duckdb_ref])
-            # Haybarn: check out what was fetched, not the name. Fetching one ref
-            # only writes FETCH_HEAD, so a Haybarn tag (haybarn-v2.0.0-rc5) has no
-            # local ref in an extension's own duckdb submodule, which was cloned
-            # from upstream DuckDB, and `checkout <tag>` fails there.
-            self.run(["git", "-C", "duckdb", "checkout", "--detach", "FETCH_HEAD"])
+            self.fetch_engine(duckdb_ref or "HEAD")
+        else:
+            if duckdb_repository:
+                self.run(
+                    ["git", "-C", "duckdb", "remote", "set-url", "origin", duckdb_repository]
+                )
+            if duckdb_ref:
+                self.run(["git", "-C", "duckdb", "fetch", "origin", duckdb_ref])
+                # Haybarn: check out what was fetched, not the name. Fetching one ref
+                # only writes FETCH_HEAD, so a Haybarn tag (haybarn-v2.0.0-rc5) has no
+                # local ref in an extension's own duckdb submodule, which was cloned
+                # from upstream DuckDB, and `checkout <tag>` fails there.
+                self.run(["git", "-C", "duckdb", "checkout", "--detach", "FETCH_HEAD"])
 
         duckdb_version = self.value("DUCKDB_VERSION") or self.value(
             "DUCKDB_COMMIT"
@@ -312,8 +332,64 @@ class PhaseRunner:
         if self.enabled("CI_FETCH_PREBUILT_DUCKDB"):
             self.prebuilt()
 
-    def nested_engine_submodule_paths(self) -> list[str]:
-        """Submodule paths below the root that vendor duckdb or extension-ci-tools."""
+    def fetch_engine(self, ref: str) -> None:
+        """Fetch one engine ref at depth 1 into the fresh duckdb/ and check it out.
+
+        Branches, tags and full commit SHAs all fetch by name; GitHub serves any
+        SHA. If the server refuses (no SHA-in-want, a short SHA), fall back to
+        the full history and resolve the ref locally.
+        """
+        try:
+            self.run(["git", "-C", "duckdb", "fetch", "--depth", "1", "--no-tags", "origin", ref])
+            target = "FETCH_HEAD"
+        except subprocess.CalledProcessError:
+            print(f"Shallow fetch of {ref} failed; fetching the full engine history", flush=True)
+            self.run(
+                [
+                    "git", "-C", "duckdb", "fetch", "--tags", "origin",
+                    "+refs/heads/*:refs/remotes/origin/*",
+                ]
+            )
+            target = self.resolve_engine_ref(ref)
+        self.run(["git", "-C", "duckdb", "checkout", "--quiet", "--detach", target])
+        if target == "FETCH_HEAD":
+            # Keep a fetched tag, so the engine's `git describe --match haybarn-v*`
+            # (the cosmetic Haybarn version) names the release, not a bare hash.
+            tag = self.fetched_tag(ref)
+            if tag:
+                self.run(["git", "-C", "duckdb", "tag", "--force", tag, "FETCH_HEAD"])
+
+    def resolve_engine_ref(self, ref: str) -> str:
+        for candidate in (f"refs/tags/{ref}", f"refs/remotes/origin/{ref}", ref):
+            try:
+                resolved = self.capture(
+                    ["git", "-C", "duckdb", "rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}"]
+                )
+            except subprocess.CalledProcessError:
+                continue
+            if resolved:
+                return resolved
+        raise ValueError(f"could not resolve DuckDB ref {ref} in {self.workspace / 'duckdb'}")
+
+    def fetched_tag(self, ref: str) -> str:
+        fetch_head = self.workspace / "duckdb" / ".git" / "FETCH_HEAD"
+        try:
+            lines = fetch_head.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return ""
+        for line in lines:
+            if f"\ttag '{ref}' of " in line or f"\t\ttag '{ref}' of " in line:
+                return ref
+        return ""
+
+    def git_with_https_rewrites(self) -> list[str]:
+        command = ["git"]
+        for prefix in GITHUB_HTTPS_REWRITES:
+            command += ["-c", f"url.https://github.com/.insteadOf={prefix}"]
+        return command
+
+    def submodule_paths(self) -> list[str]:
+        """Every submodule path the extension's .gitmodules declares."""
         if not (self.workspace / ".gitmodules").is_file():
             return []
         try:
@@ -326,12 +402,78 @@ class PhaseRunner:
         paths = []
         for line in listing.splitlines():
             parts = line.split(maxsplit=1)
-            if len(parts) != 2:
-                continue
-            path = parts[1].strip().strip("/")
-            if "/" in path and PurePosixPath(path).name in ("duckdb", "extension-ci-tools"):
-                paths.append(path)
+            if len(parts) == 2:
+                paths.append(parts[1].strip().strip("/"))
         return paths
+
+    def prepare_extension(self) -> None:
+        """Complete the workflow's shallow, submodule-free extension checkout.
+
+        Haybarn: the full-history recursive checkout this replaces cloned the
+        extension's own upstream DuckDB (with its history) and extension-ci-tools
+        on every leg, only for this phase to re-point or replace them.
+        """
+        self.fetch_head_tags()
+        replaced = {"extension-ci-tools"}
+        # The engine is replaced only when the caller names one; otherwise the
+        # extension builds its pinned duckdb submodule, as before.
+        # set_caller_as_duckdb has already put the caller's checkout there.
+        if (self.value("CI_DUCKDB_GIT_REPOSITORY") and self.duckdb_ref()) or (
+            self.workspace / "duckdb" / ".git"
+        ).exists():
+            replaced.add("duckdb")
+        nested = set(self.nested_engine_submodule_paths())
+        declared = self.submodule_paths()
+        vendored = [path for path in declared if path not in replaced and path not in nested]
+        engine = [path for path in vendored if path == "duckdb"]
+        vendored = [path for path in vendored if path != "duckdb"]
+        git = self.git_with_https_rewrites()
+        if vendored:
+            print(f"Initialising extension submodules at depth 1: {' '.join(vendored)}", flush=True)
+            try:
+                self.run([*git, "submodule", "update", "--init", "--recursive", "--depth", "1", "--", *vendored])
+            except subprocess.CalledProcessError:
+                # A server that refuses fetching the pinned commit by SHA.
+                print("Shallow submodule update failed; retrying at full depth", flush=True)
+                self.run([*git, "submodule", "foreach", "--recursive", "git fetch --unshallow || true"])
+                self.run([*git, "submodule", "update", "--init", "--recursive", "--", *vendored])
+        if engine:
+            # Kept with history: the existing-checkout path fetches the ref into it.
+            self.run([*git, "submodule", "update", "--init", "--recursive", "--", *engine])
+
+    def fetch_head_tags(self) -> None:
+        """Fetch the remote tags that point at HEAD.
+
+        DuckDB's duckdb_extension_generate_version uses `git describe --tags` only
+        when HEAD is exactly a vX.Y.Z tag; any other describe output becomes the
+        commit hash. So the tags on HEAD are all the version needs from history.
+        """
+        try:
+            head = self.capture(["git", "rev-parse", "HEAD"])
+            listing = self.capture(["git", "ls-remote", "--tags", "origin"])
+        except subprocess.CalledProcessError:
+            print("Could not list the extension's remote tags; versioning by hash", flush=True)
+            return
+        tags = set()
+        for line in listing.splitlines():
+            parts = line.split("\t", 1)
+            if len(parts) != 2 or parts[0] != head or not parts[1].startswith("refs/tags/"):
+                continue
+            tag = parts[1][len("refs/tags/"):]
+            tags.add(tag[: -len("^{}")] if tag.endswith("^{}") else tag)
+        if tags:
+            refspecs = [f"+refs/tags/{tag}:refs/tags/{tag}" for tag in sorted(tags)]
+            self.run(
+                ["git", "fetch", "--depth", "1", "--no-tags", "--recurse-submodules=no", "origin", *refspecs]
+            )
+
+    def nested_engine_submodule_paths(self) -> list[str]:
+        """Submodule paths below the root that vendor duckdb or extension-ci-tools."""
+        return [
+            path
+            for path in self.submodule_paths()
+            if "/" in path and PurePosixPath(path).name in ENGINE_SUBMODULE_NAMES
+        ]
 
     def link_nested_engine_submodules(self) -> None:
         # Haybarn: extensions that vendor duckdb / extension-ci-tools under a

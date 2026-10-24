@@ -321,6 +321,9 @@ env:
   CI_RUN_DISK_CLEAN_STEP: ${{ inputs.run_disk_clean_step }}
   CI_USE_DEFAULT_RUNNERS: ${{ inputs.runners == '{}' }}
   CI_FETCH_PREBUILT_DUCKDB: true
+  # Haybarn: the extension checkouts above are shallow and skip submodules;
+  # ci_phase.py checkout completes them (see PhaseRunner.prepare_extension).
+  CI_INIT_EXTENSION_SUBMODULES: true
 
 jobs:
   generate_matrix:
@@ -395,8 +398,12 @@ jobs:
         with:
           repository: ${{ inputs.override_repository != '' && inputs.override_repository || github.repository }}
           ref: ${{ inputs.override_repository != '' && inputs.override_ref || '' }}
-          fetch-depth: 0
-          submodules: recursive
+          # Haybarn: shallow, no submodules. ci_phase.py checkout then fetches the
+          # tags on HEAD (all an extension's git-describe version can use) and
+          # inits the extension's own submodules at depth 1, skipping the
+          # duckdb / extension-ci-tools ones that it replaces anyway.
+          fetch-depth: 1
+          submodules: false
 
       - name: Checkout / Extension CI tools
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -404,7 +411,6 @@ jobs:
           path: extension-ci-tools
           ref: ${{ inputs.ci_tools_version }}
           repository: ${{ inputs.override_ci_tools_repository }}
-          fetch-depth: 0
 
       - name: Checkout / DuckDB from calling workflow
         if: ${{ inputs.set_caller_as_duckdb }}
@@ -514,8 +520,12 @@ jobs:
         with:
           repository: ${{ inputs.override_repository != '' && inputs.override_repository || github.repository }}
           ref: ${{ inputs.override_repository != '' && inputs.override_ref || '' }}
-          fetch-depth: 0
-          submodules: recursive
+          # Haybarn: shallow, no submodules. ci_phase.py checkout then fetches the
+          # tags on HEAD (all an extension's git-describe version can use) and
+          # inits the extension's own submodules at depth 1, skipping the
+          # duckdb / extension-ci-tools ones that it replaces anyway.
+          fetch-depth: 1
+          submodules: false
 
       - name: Checkout / Extension CI tools
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -635,8 +645,12 @@ jobs:
         with:
           repository: ${{ inputs.override_repository != '' && inputs.override_repository || github.repository }}
           ref: ${{ inputs.override_repository != '' && inputs.override_ref || '' }}
-          fetch-depth: 0
-          submodules: recursive
+          # Haybarn: shallow, no submodules. ci_phase.py checkout then fetches the
+          # tags on HEAD (all an extension's git-describe version can use) and
+          # inits the extension's own submodules at depth 1, skipping the
+          # duckdb / extension-ci-tools ones that it replaces anyway.
+          fetch-depth: 1
+          submodules: false
 
       - name: Checkout / Extension CI tools
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -794,8 +808,12 @@ jobs:
         with:
           repository: ${{ inputs.override_repository != '' && inputs.override_repository || github.repository }}
           ref: ${{ inputs.override_repository != '' && inputs.override_ref || '' }}
-          fetch-depth: 0
-          submodules: recursive
+          # Haybarn: shallow, no submodules. ci_phase.py checkout then fetches the
+          # tags on HEAD (all an extension's git-describe version can use) and
+          # inits the extension's own submodules at depth 1, skipping the
+          # duckdb / extension-ci-tools ones that it replaces anyway.
+          fetch-depth: 1
+          submodules: false
 
       - name: Checkout / Extension CI tools
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

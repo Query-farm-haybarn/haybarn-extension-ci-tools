@@ -156,6 +156,141 @@ class CIPhaseTest(unittest.TestCase):
             runner = RecordingRunner(self.environment(Path(directory)))
             self.assertEqual(runner.nested_engine_submodule_paths(), [])
 
+    @unittest.skipIf(shutil.which("git") is None or os.name == "nt", "needs git and symlinks")
+    def test_shallow_extension_checkout_with_real_git(self):
+        """Shallow extension + submodules + engine, against local repositories."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            git_env = {
+                **os.environ,
+                "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+                "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com",
+                "GIT_CONFIG_GLOBAL": str(root / "gitconfig"), "GIT_CONFIG_NOSYSTEM": "1",
+                # Submodule URLs below are local paths.
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "protocol.file.allow", "GIT_CONFIG_VALUE_0": "always",
+            }
+
+            def git(cwd, *args):
+                return subprocess.run(
+                    ["git", *args], cwd=cwd, env=git_env, check=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                ).stdout.strip()
+
+            def repo(name, commits=3):
+                path = root / name
+                path.mkdir()
+                git(path, "init", "--quiet", "--initial-branch=main")
+                for index in range(commits):
+                    (path / "file.txt").write_text(f"{name} {index}\n")
+                    git(path, "add", "file.txt")
+                    git(path, "commit", "--quiet", "-m", f"{name} {index}")
+                return path
+
+            engine = repo("engine")
+            engine_old = git(engine, "rev-parse", "HEAD~1")
+            git(engine, "tag", "-a", "-m", "rc", "haybarn-v2.0.0-rc5", "HEAD~1")
+            upstream = repo("upstream_duckdb")
+            ci_tools = repo("ci_tools")
+            inner = repo("inner")
+            library = repo("library")
+            git(library, "submodule", "add", "--quiet", (inner).as_uri(), "inner")
+            git(library, "commit", "--quiet", "-m", "inner")
+            git(library, "commit", "--quiet", "--allow-empty", "-m", "past the pin")
+            library_pin = git(library, "rev-parse", "HEAD~1")
+            extension = repo("extension")
+            for url, path in (
+                (upstream, "duckdb"),
+                (ci_tools, "extension-ci-tools"),
+                (library, "third_party/library"),
+                (upstream, "external/duckdb"),
+            ):
+                git(extension, "submodule", "add", "--quiet", url.as_uri(), path)
+            git(extension / "third_party/library", "checkout", "--quiet", library_pin)
+            git(extension, "add", "third_party/library")
+            git(extension, "commit", "--quiet", "-m", "submodules")
+            git(extension, "tag", "v0.9.0", "HEAD~1")
+            git(extension, "tag", "-a", "-m", "release", "v1.0.0")
+
+            workspace = root / "workspace"
+            git(root, "clone", "--quiet", "--depth", "1", "--no-tags", extension.as_uri(), str(workspace))
+            self.assertTrue((workspace / "duckdb").is_dir())
+            self.assertFalse(any((workspace / "duckdb").iterdir()))
+            self.assertEqual(git(workspace, "tag"), "")
+
+            env = {
+                **git_env,
+                **self.environment(workspace),
+                "CI_INIT_EXTENSION_SUBMODULES": "true",
+                "CI_DUCKDB_GIT_REPOSITORY": engine.as_uri(),
+                "DUCKDB_VERSION": "haybarn-v2.0.0-rc5",
+            }
+            del env["CI_FETCH_PREBUILT_DUCKDB"]
+            with redirect_stderr(io.StringIO()):
+                PhaseRunner(env).checkout()
+
+            # Extension: only the tag on HEAD came back, and describe finds it.
+            self.assertEqual(git(workspace, "tag"), "v1.0.0")
+            self.assertEqual(git(workspace, "describe", "--tags", "--always"), "v1.0.0")
+            # Vendored submodule (and its own nested one) at the pin, shallow.
+            self.assertEqual(git(workspace / "third_party/library", "rev-parse", "HEAD"), library_pin)
+            self.assertEqual(git(workspace / "third_party/library", "rev-parse", "--is-shallow-repository"), "true")
+            self.assertEqual((workspace / "third_party/library/inner/file.txt").read_text(), "inner 2\n")
+            # The engine: fetched tag checked out at depth 1, tag kept for describe.
+            duckdb = workspace / "duckdb"
+            self.assertEqual(git(duckdb, "rev-parse", "HEAD"), engine_old)
+            self.assertEqual(git(duckdb, "rev-list", "--count", "HEAD"), "1")
+            self.assertEqual(git(duckdb, "describe", "--tags", "--match", "haybarn-v*"), "haybarn-v2.0.0-rc5")
+            self.assertEqual(git(duckdb, "remote", "get-url", "origin"), engine.as_uri())
+            # extension-ci-tools is left for the workflow's own checkout; the nested
+            # engine path points at the top-level engine.
+            self.assertFalse(any((workspace / "extension-ci-tools").iterdir()))
+            self.assertTrue((workspace / "external/duckdb").is_symlink())
+            self.assertEqual((workspace / "external/duckdb/file.txt").read_text(), "engine 1\n")
+
+            # A bare commit SHA (not a ref tip) also fetches at depth 1.
+            shutil.rmtree(duckdb)
+            env["DUCKDB_VERSION"] = git(engine, "rev-parse", "HEAD~2")
+            with redirect_stderr(io.StringIO()):
+                PhaseRunner(env).checkout()
+            self.assertEqual(git(duckdb, "rev-parse", "HEAD"), env["DUCKDB_VERSION"])
+            self.assertEqual(git(duckdb, "rev-list", "--count", "HEAD"), "1")
+
+            # A short SHA cannot be fetched by name: fall back to the full history.
+            shutil.rmtree(duckdb)
+            env["DUCKDB_VERSION"] = engine_old[:12]
+            with redirect_stderr(io.StringIO()):
+                PhaseRunner(env).checkout()
+            self.assertEqual(git(duckdb, "rev-parse", "HEAD"), engine_old)
+
+            # A server that refuses unadvertised objects (protocol v0 without
+            # allowAnySHA1InWant): the engine SHA and the vendored submodule's pin
+            # (not a branch tip) both fall back to full history.
+            refusing = {
+                **env,
+                "GIT_CONFIG_COUNT": "2",
+                "GIT_CONFIG_KEY_1": "protocol.version", "GIT_CONFIG_VALUE_1": "0",
+                "DUCKDB_VERSION": engine_old,
+                "CI_DUCKDB_GIT_REPOSITORY": engine.as_uri(),
+            }
+            fresh = root / "fresh"
+            git(root, "clone", "--quiet", "--depth", "1", "--no-tags", extension.as_uri(), str(fresh))
+            refusing["GITHUB_WORKSPACE"] = str(fresh)
+            with redirect_stderr(io.StringIO()):
+                PhaseRunner(refusing).checkout()
+            self.assertEqual(git(fresh / "duckdb", "rev-parse", "HEAD"), engine_old)
+            self.assertEqual(git(fresh / "third_party/library", "rev-parse", "HEAD"), library_pin)
+            self.assertEqual((fresh / "third_party/library/inner/file.txt").read_text(), "inner 2\n")
+
+            # Without an engine override the extension's own duckdb pin is built.
+            shutil.rmtree(duckdb)
+            (duckdb).mkdir()
+            env["CI_DUCKDB_GIT_REPOSITORY"] = ""
+            env["DUCKDB_VERSION"] = ""
+            with redirect_stderr(io.StringIO()):
+                PhaseRunner(env).checkout()
+            self.assertEqual(git(duckdb, "rev-parse", "HEAD"), git(upstream, "rev-parse", "HEAD"))
+
     def test_sccache_is_wired_into_rust_docker_builds(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
@@ -433,9 +568,10 @@ class CIPhaseTest(unittest.TestCase):
             self.assertEqual(
                 commands,
                 [
-                    ["git", "clone", "--filter=blob:none", "duckdb/duckdb-fork", "duckdb"],
-                    ["git", "-C", "duckdb", "fetch", "origin", "v1.2.3"],
-                    ["git", "-C", "duckdb", "checkout", "--detach", "FETCH_HEAD"],
+                    ["git", "init", "--quiet", "duckdb"],
+                    ["git", "-C", "duckdb", "remote", "add", "origin", "duckdb/duckdb-fork"],
+                    ["git", "-C", "duckdb", "fetch", "--depth", "1", "--no-tags", "origin", "v1.2.3"],
+                    ["git", "-C", "duckdb", "checkout", "--quiet", "--detach", "FETCH_HEAD"],
                     ["git", "tag", "v2.0.0"],
                     ["make", "set_duckdb_tag"],
                 ],
@@ -467,15 +603,18 @@ class CIPhaseTest(unittest.TestCase):
             self.assertEqual(
                 commands,
                 [
+                    ["git", "init", "--quiet", "duckdb"],
                     [
                         "git",
-                        "clone",
-                        "--filter=blob:none",
-                        "https://github.com/Query-farm-haybarn/haybarn.git",
+                        "-C",
                         "duckdb",
+                        "remote",
+                        "add",
+                        "origin",
+                        "https://github.com/Query-farm-haybarn/haybarn.git",
                     ],
-                    ["git", "-C", "duckdb", "fetch", "origin", "v1.2.3"],
-                    ["git", "-C", "duckdb", "checkout", "--detach", "FETCH_HEAD"],
+                    ["git", "-C", "duckdb", "fetch", "--depth", "1", "--no-tags", "origin", "v1.2.3"],
+                    ["git", "-C", "duckdb", "checkout", "--quiet", "--detach", "FETCH_HEAD"],
                 ],
             )
             runner.prebuilt.assert_called_once_with()
@@ -483,7 +622,7 @@ class CIPhaseTest(unittest.TestCase):
     def test_checkout_reuses_existing_duckdb_repository(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
-            (workspace / "duckdb").mkdir()
+            (workspace / "duckdb" / ".git").mkdir(parents=True)
             env = self.environment(workspace)
             env["CI_DUCKDB_GIT_REPOSITORY"] = "https://github.com/duckdb/duckdb.git"
             runner = RecordingRunner(env)
@@ -511,7 +650,9 @@ class CIPhaseTest(unittest.TestCase):
     def test_checkout_resolves_existing_duckdb_when_version_is_omitted(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
+            # A populated submodule: .git is a file pointing into .git/modules.
             (workspace / "duckdb").mkdir()
+            (workspace / "duckdb" / ".git").write_text("gitdir: ../.git/modules/duckdb\n")
             github_environment = workspace / "github-environment"
             github_output = workspace / "github-output"
             env = self.environment(workspace)

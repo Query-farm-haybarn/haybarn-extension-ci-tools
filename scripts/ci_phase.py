@@ -383,7 +383,9 @@ class PhaseRunner:
         return ""
 
     def git_with_https_rewrites(self) -> list[str]:
-        command = ["git"]
+        # core.longpaths: vendored trees can exceed Windows' 260-character
+        # MAX_PATH (sitting_duck's tree-sitter-hcl testdata); ignored elsewhere.
+        command = ["git", "-c", "core.longpaths=true"]
         for prefix in GITHUB_HTTPS_REWRITES:
             command += ["-c", f"url.https://github.com/.insteadOf={prefix}"]
         return command

@@ -282,7 +282,7 @@ env:
   # (.github/actions/cache-clients). The built-in backend kept its entries under
   # <url>/ccache/<2>/<38> and the helper appends only <2>/<38>, hence
   # /ccache/ccache: the same objects as the http clients (1.5 line, engine release).
-  CCACHE_REMOTE_STORAGE: "${{ format('https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache/ccache @bearer-token={0} data-timeout=10s request-timeout=30s', secrets.vcpkg_token) }}"
+  CCACHE_REMOTE_STORAGE: "${{ format('https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache/ccache @bearer-token={0}', secrets.vcpkg_token) }}"
   CCACHE_NOHASHDIR: "1"
   CCACHE_SLOPPINESS: "time_macros,include_file_mtime,pch_defines"
   CCACHE_COMPILERCHECK: "content"

@@ -174,7 +174,7 @@ env:
   X_VCPKG_ASSET_SOURCES: "${{ inputs.vcpkg_asset_sources == '' && format('clear;x-azurl,https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/assets/,auth={0},readwrite', secrets.vcpkg_token) || inputs.vcpkg_asset_sources }}"
   # https (ccache-storage-https helper from .github/actions/cache-clients); see
   # _extension_distribution.yml for the /ccache/ccache prefix.
-  CCACHE_REMOTE_STORAGE: "${{ format(inputs.ccache_remote_storage == '' && 'https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache/ccache @bearer-token={0} data-timeout=10s request-timeout=30s' || inputs.ccache_remote_storage, secrets.vcpkg_token) }}"
+  CCACHE_REMOTE_STORAGE: "${{ format(inputs.ccache_remote_storage == '' && 'https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache/ccache @bearer-token={0}' || inputs.ccache_remote_storage, secrets.vcpkg_token) }}"
   # sccache for Rust groups, on the same Worker (WebDAV keyspace sccache/).
   SCCACHE_WEBDAV_ENDPOINT: https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/sccache/
   SCCACHE_WEBDAV_TOKEN: ${{ secrets.vcpkg_token }}

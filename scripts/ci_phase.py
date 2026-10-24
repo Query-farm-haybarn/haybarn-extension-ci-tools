@@ -1072,16 +1072,47 @@ class PhaseRunner:
             # An empty source preserves compatibility with workflows that only
             # configure CI_PREBUILT_DUCKDB_ARTIFACT.
             self.prepare_prebuilt_duckdb()
+        self.start_sccache()
         try:
             getattr(self, f"build_{self.platform}")()
         finally:
             self.report_sccache()
 
-    def report_sccache(self) -> None:
-        """Print and stop the host's sccache server (RUSTC_WRAPPER from .github/actions/cache-clients)."""
-        # Haybarn: Linux docker builds report from inside their container (build_linux).
+    def host_sccache(self) -> str:
+        """The host's sccache RUSTC_WRAPPER (from .github/actions/cache-clients), or ""."""
+        # Haybarn: Linux docker builds start and report from inside their container (build_linux).
         wrapper = self.value("RUSTC_WRAPPER")
         if not wrapper or Path(wrapper).name not in {"sccache", "sccache.exe"}:
+            return ""
+        return wrapper
+
+    def start_sccache(self) -> None:
+        """Start the host's sccache server here, before the build tool runs.
+
+        Otherwise the first rustc call starts it from inside the build (make -> ninja -> cmake -E
+        env -> cargo). On Windows that server did not outlive the build: dplyr's MSVC leg (Corrosion)
+        compiled 50+ crates through sccache, with cache hits (its Rust build went from 155 s to 42 s
+        between runs), yet `--show-stats` afterwards reached a fresh server reporting 0 requests.
+        """
+        wrapper = self.host_sccache()
+        if not wrapper:
+            return
+        try:
+            subprocess.run(
+                [wrapper, "--start-server"],
+                check=False,
+                env=self.env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.STDOUT,
+                timeout=120,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            print(f"sccache --start-server failed: {error}", flush=True)
+
+    def report_sccache(self) -> None:
+        """Print and stop the host's sccache server."""
+        wrapper = self.host_sccache()
+        if not wrapper:
             return
         for arguments in (["--show-stats"], ["--stop-server"]):
             try:

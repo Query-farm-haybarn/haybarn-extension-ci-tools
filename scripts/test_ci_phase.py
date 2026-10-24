@@ -216,7 +216,7 @@ class CIPhaseTest(unittest.TestCase):
                 {"CCACHE_REMOTE_STORAGE": "http://cache.example/ccache"},
             )
 
-    def test_host_sccache_is_reported_and_stopped_after_the_build(self):
+    def test_host_sccache_is_started_before_and_reported_after_the_build(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory), platform="macos", architecture="osx_arm64")
             env["RUSTC_WRAPPER"] = "/opt/cache-clients/sccache"
@@ -229,7 +229,11 @@ class CIPhaseTest(unittest.TestCase):
                     runner.build()
             self.assertEqual(
                 [call.args[0] for call in run.call_args_list],
-                [["/opt/cache-clients/sccache", "--show-stats"], ["/opt/cache-clients/sccache", "--stop-server"]],
+                [
+                    ["/opt/cache-clients/sccache", "--start-server"],
+                    ["/opt/cache-clients/sccache", "--show-stats"],
+                    ["/opt/cache-clients/sccache", "--stop-server"],
+                ],
             )
 
     def test_boolean_and_toolchain_parsing(self):

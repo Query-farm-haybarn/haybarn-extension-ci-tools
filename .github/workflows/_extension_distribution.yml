@@ -277,12 +277,18 @@ env:
   # Haybarn: shared ccache on the same Worker/R2 (as build.yml and the engine
   # release), so community builds hit across runs, repos and legs instead of
   # thrashing the 10 GB GitHub cache. Remote errors are misses, not failures.
-  CCACHE_REMOTE_STORAGE: "${{ format('http://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache|bearer-token={0}|connect-timeout=10000|operation-timeout=30000', secrets.vcpkg_token) }}"
+  # https, so the bearer token is not sent in the clear: ccache's built-in HTTP
+  # backend is http-only, so every job installs the ccache-storage-https helper
+  # (.github/actions/cache-clients). The built-in backend kept its entries under
+  # <url>/ccache/<2>/<38> and the helper appends only <2>/<38>, hence
+  # /ccache/ccache: the same objects as the http clients (1.5 line, engine release).
+  CCACHE_REMOTE_STORAGE: "${{ format('https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache/ccache @bearer-token={0} data-timeout=10s request-timeout=30s', secrets.vcpkg_token) }}"
   CCACHE_NOHASHDIR: "1"
   CCACHE_SLOPPINESS: "time_macros,include_file_mtime,pch_defines"
   CCACHE_COMPILERCHECK: "content"
-  # Haybarn: sccache for Rust in the Linux Docker builds (fetched by ci_phase
-  # when the job uses Rust and the token is set).
+  # Haybarn: sccache for Rust on every leg: Linux Docker builds fetch it in
+  # ci_phase (when the job uses Rust and the token is set), the other legs get it
+  # from .github/actions/cache-clients (the wasm image ships it).
   SCCACHE_WEBDAV_ENDPOINT: https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/sccache/
   SCCACHE_WEBDAV_TOKEN: ${{ secrets.vcpkg_token }}
   CI_EXTENSION_NAME: ${{ inputs.extension_name }}
@@ -437,6 +443,13 @@ jobs:
             ccache-extension-distribution-${{ matrix.duckdb_arch }}-
           save: ${{ inputs.save_cache }}
 
+      # Haybarn: the ccache https helper for the Docker build (ci_phase maps it into the
+      # container and fetches sccache there itself).
+      - name: Setup / Cache clients
+        uses: ./extension-ci-tools/.github/actions/cache-clients
+        with:
+          ccache: docker
+
       - name: Setup
         run: python3 extension-ci-tools/scripts/ci_phase.py setup
 
@@ -547,6 +560,12 @@ jobs:
             extension-distribution-${{ matrix.duckdb_arch }}-
             ccache-extension-distribution-${{ matrix.duckdb_arch }}-
           save: ${{ inputs.save_cache }}
+
+      # Haybarn: ccache https helper; sccache as RUSTC_WRAPPER for Rust extensions.
+      - name: Setup / Cache clients
+        uses: ./extension-ci-tools/.github/actions/cache-clients
+        with:
+          rust: ${{ env.CI_HAS_RUST }}
 
       - name: Setup
         run: python3 extension-ci-tools/scripts/ci_phase.py setup
@@ -672,17 +691,14 @@ jobs:
             ccache-extension-distribution-${{ matrix.duckdb_arch }}-
           save: ${{ inputs.save_cache }}
 
-      # Haybarn: ccache-action installs ccache 4.9.1 here, whose HTTP backend
-      # silently fails bearer-token uploads, so the shared R2 cache would never
-      # warm; put the upstream 4.13.6 release ahead of it on PATH.
-      - name: Setup / Ccache 4.13.6
-        shell: bash
-        run: |
-          CCACHE_VERSION=4.13.6
-          curl -fsSL "https://github.com/ccache/ccache/releases/download/v${CCACHE_VERSION}/ccache-${CCACHE_VERSION}-windows-x86_64.zip" -o "$RUNNER_TEMP/ccache.zip"
-          unzip -j -o "$RUNNER_TEMP/ccache.zip" "ccache-${CCACHE_VERSION}-windows-x86_64/ccache.exe" -d "$RUNNER_TEMP/ccache-bin"
-          cygpath -w "$RUNNER_TEMP/ccache-bin" >> "$GITHUB_PATH"
-          "$RUNNER_TEMP/ccache-bin/ccache.exe" --version | head -1
+      # Haybarn: ccache-action installs ccache 4.9.1 here, which cannot use the
+      # https remote (no storage helpers; its HTTP backend also silently failed
+      # bearer-token uploads); cache-clients puts 4.13.6 ahead of it on PATH, adds
+      # the ccache https helper, and sccache as RUSTC_WRAPPER for Rust extensions.
+      - name: Setup / Cache clients
+        uses: ./extension-ci-tools/.github/actions/cache-clients
+        with:
+          rust: ${{ env.CI_HAS_RUST }}
 
       - name: Setup / Rtools
         if: ${{ matrix.duckdb_arch == 'windows_amd64_rtools' || matrix.duckdb_arch == 'windows_amd64_mingw' }}
@@ -864,6 +880,12 @@ jobs:
           if [ "${{ matrix.duckdb_arch }}" = "wasm_threads" ]; then
             echo 'CARGO_TARGET_WASM32_UNKNOWN_EMSCRIPTEN_RUSTFLAGS=-Ctarget-feature=+atomics,+bulk-memory,+mutable-globals' >> "$GITHUB_ENV"
           fi
+
+      # Haybarn: ccache https helper; sccache (the image's) as RUSTC_WRAPPER for Rust extensions.
+      - name: Setup / Cache clients
+        uses: ./extension-ci-tools/.github/actions/cache-clients
+        with:
+          rust: ${{ env.CI_HAS_RUST }}
 
       - name: Setup / Go
         if: ${{ contains(format(';{0};', inputs.extra_toolchains), ';go;') }}

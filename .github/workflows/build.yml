@@ -172,7 +172,12 @@ env:
   # input, so this workflow owns the substitution of the {0} placeholder.
   VCPKG_BINARY_SOURCES: "${{ format(inputs.vcpkg_binary_sources == '' && 'clear;http,https://haybarn-vcpkg-cache.rusty-bb6.workers.dev,readwrite,Authorization: Bearer {0}' || inputs.vcpkg_binary_sources, secrets.vcpkg_token) }}"
   X_VCPKG_ASSET_SOURCES: "${{ inputs.vcpkg_asset_sources == '' && format('clear;x-azurl,https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/assets/,auth={0},readwrite', secrets.vcpkg_token) || inputs.vcpkg_asset_sources }}"
-  CCACHE_REMOTE_STORAGE: "${{ format(inputs.ccache_remote_storage == '' && 'http://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache|bearer-token={0}|connect-timeout=10000|operation-timeout=30000' || inputs.ccache_remote_storage, secrets.vcpkg_token) }}"
+  # https (ccache-storage-https helper from .github/actions/cache-clients); see
+  # _extension_distribution.yml for the /ccache/ccache prefix.
+  CCACHE_REMOTE_STORAGE: "${{ format(inputs.ccache_remote_storage == '' && 'https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/ccache/ccache @bearer-token={0} data-timeout=10s request-timeout=30s' || inputs.ccache_remote_storage, secrets.vcpkg_token) }}"
+  # sccache for Rust groups, on the same Worker (WebDAV keyspace sccache/).
+  SCCACHE_WEBDAV_ENDPOINT: https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/sccache/
+  SCCACHE_WEBDAV_TOKEN: ${{ secrets.vcpkg_token }}
   AWS_REQUEST_CHECKSUM_CALCULATION: when_required
   GEN: ninja
 
@@ -297,6 +302,10 @@ jobs:
             build-${{ matrix.artifact_name }}-
             ccache-build-${{ matrix.artifact_name }}-
           save: ${{ inputs.save_cache }}
+      - name: Setup cache clients
+        uses: ./extension-ci-tools/.github/actions/cache-clients
+        with:
+          rust: ${{ matrix.toolchain == 'rust' }}
       - name: Configure
         run: python3 extension-ci-tools/scripts/ci_phase.py setup
       - name: Build
@@ -388,6 +397,10 @@ jobs:
             build-${{ matrix.artifact_name }}-
             ccache-build-${{ matrix.artifact_name }}-
           save: ${{ inputs.save_cache }}
+      - name: Setup cache clients
+        uses: ./extension-ci-tools/.github/actions/cache-clients
+        with:
+          rust: ${{ matrix.toolchain == 'rust' }}
       - name: Configure
         run: python3 extension-ci-tools/scripts/ci_phase.py setup
       - name: Build
@@ -510,6 +523,11 @@ jobs:
           vcpkgGitCommitId: ${{ inputs.vcpkg_commit }}
           vcpkgGitURL: ${{ inputs.vcpkg_url }}
           vcpkgDirectory: ${{ env.VCPKG_WINDOWS_ROOT }}
+      # Also replaces ccache-action's ccache 4.9.1, which cannot use the https remote.
+      - name: Setup cache clients
+        uses: ./extension-ci-tools/.github/actions/cache-clients
+        with:
+          rust: ${{ matrix.toolchain == 'rust' }}
       - name: Configure
         run: python extension-ci-tools/scripts/ci_phase.py setup
       - name: Build
@@ -610,6 +628,10 @@ jobs:
         uses: dtolnay/rust-toolchain@4d407b29186a635f0cc27475ef0bc0ae605a8866 # 1.86.0
         with:
           targets: wasm32-unknown-emscripten
+      - name: Setup cache clients
+        uses: ./extension-ci-tools/.github/actions/cache-clients
+        with:
+          rust: ${{ matrix.toolchain == 'rust' }}
       - name: Configure
         run: python3 extension-ci-tools/scripts/ci_phase.py setup
       - name: Build

@@ -9,8 +9,9 @@
 #     workspace as base dir; the image's defaults (/ccache_dir, an anonymous volume, and
 #     /duckdb_build_dir) are for `docker run -v` callers. github.workspace is the host path in a
 #     container job, so this uses $GITHUB_WORKSPACE. The R2 remote cache comes from the
-#     workflow's CCACHE_REMOTE_STORAGE (ccache 4.13.6 in the image does the bearer auth); its
-#     value carries the token and is never printed.
+#     workflow's CCACHE_REMOTE_STORAGE (https, through the ccache-storage-https helper that
+#     .github/actions/cache-clients installs for the image's ccache 4.13.6); its value carries
+#     the token and is never printed.
 
 name: 'Haybarn wasm toolchain'
 description: 'Check the image emscripten and set up ccache in a wasm container job.'

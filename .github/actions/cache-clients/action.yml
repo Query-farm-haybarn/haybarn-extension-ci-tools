@@ -1,0 +1,180 @@
+# Haybarn: clients for the shared build cache (Cloudflare Worker in front of R2,
+# haybarn-vcpkg-cache.rusty-bb6.workers.dev), for every build leg that compiles on the
+# runner or in a `container:` job. Linux `docker run` builds (ci_phase.py) use the files this
+# installs under $GITHUB_WORKSPACE/.ci/cache-clients through the bind mount.
+#
+#   * ccache: the remote is https, which ccache's built-in HTTP backend does not support. ccache
+#     >= 4.13 hands an https:// remote to a storage helper named ccache-storage-https, found via
+#     CCACHE_LIBEXEC_DIRS. This installs ccache's own Go helper (ccache/ccache-storage-http-go),
+#     checksum-pinned. ccache errors out on an https remote it has no helper for, so if the
+#     helper cannot be installed the job drops the remote (CCACHE_REMOTE_STORAGE empty) and
+#     builds from its local cache with a warning.
+#   * sccache (rust: true): RUSTC_WRAPPER for cargo, on the WebDAV keyspace of the same Worker
+#     (SCCACHE_WEBDAV_ENDPOINT/TOKEN come from the workflow env). Uses an sccache already on
+#     PATH at the pinned version (the wasm build image ships one), else downloads it. The server
+#     never idles out, so `sccache --show-stats` after the build (ci_phase.py) counts the whole
+#     job; ci_phase.py also stops it.
+#
+# Same versions as the Linux Docker builds (ci_phase.py SCCACHE_VERSION) and the wasm image.
+
+name: 'Haybarn cache clients'
+description: 'Install the ccache https storage helper and, for Rust, sccache, for the shared R2 cache.'
+
+inputs:
+  rust:
+    description: 'Also set up sccache as RUSTC_WRAPPER'
+    default: 'false'
+  ccache:
+    description: >-
+      Where ccache runs: 'host' (this job; ccache on PATH must be >= 4.13, and on Windows an older
+      one, e.g. ccache-action's 4.9.1, is replaced by 4.13.6) or 'docker' (a `docker run` build
+      image brings its own ccache)
+    default: 'host'
+
+outputs:
+  sccache:
+    description: 'RUSTC_WRAPPER path, or empty'
+    value: ${{ steps.install.outputs.sccache }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install cache clients
+      id: install
+      shell: bash
+      env:
+        HAYBARN_CACHE_CLIENTS_RUST: ${{ inputs.rust }}
+        HAYBARN_CACHE_CLIENTS_CCACHE: ${{ inputs.ccache }}
+      run: |
+        set -uo pipefail
+        HELPER_VERSION=0.10
+        CCACHE_VERSION=4.13.6
+        CCACHE_WINDOWS_SHA=3d7cebb05850ad704e197b3f1d3f0f924ab6c9fdfc561578e146184fe9d89380
+        SCCACHE_VERSION=0.8.2
+        dir="$GITHUB_WORKSPACE/.ci/cache-clients"
+        mkdir -p "$dir"
+        exe=""
+        case "${RUNNER_OS}/${RUNNER_ARCH}" in
+          Linux/X64)
+            helper_asset="linux-amd64.tar.gz"; helper_sha=88963ef2cc21ca588145d46bcb02b8295275975ed75696eedf2cdb0e9543edd0
+            sccache_asset="x86_64-unknown-linux-musl.tar.gz"; sccache_sha=ecda4ddc89a49f1ec6f35bdce5ecbf6f205b399a680d11119d4ce9f6d962104e ;;
+          Linux/ARM64)
+            helper_asset="linux-arm64.tar.gz"; helper_sha=f0ee3302b52f87628b69fa53d2cc52a626c4c5c7e43b779ac9e3db481418db40
+            sccache_asset="aarch64-unknown-linux-musl.tar.gz"; sccache_sha=d4b6c04edf7ed687a50be0d3d899dca01bc3037dcf99f16bc46a7b9a76f78db9 ;;
+          macOS/ARM64)
+            helper_asset="darwin-arm64.tar.gz"; helper_sha=e84eb529e2ee49bb4263b671f8431376995f8cf071facb20a05aa9aa235bf095
+            sccache_asset="aarch64-apple-darwin.tar.gz"; sccache_sha=32604da614ce679623a8de0d38eab91b87431d59f3344c5523c82e1b6e85ffc4 ;;
+          Windows/X64)
+            exe=".exe"
+            helper_asset="windows-amd64.zip"; helper_sha=0bdb58975880dad2e53fc8e99f35e942ca4770a3cc7a39aa3453d6ffe13315b2
+            sccache_asset="x86_64-pc-windows-msvc.zip"; sccache_sha=2b35d159eff6d662b38d2527e7f362be90f5d9d8b9116f6197243f4b1cd926ff ;;
+          *)
+            helper_asset=""; sccache_asset="" ;;
+        esac
+
+        sha256() {
+          if command -v sha256sum > /dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
+        }
+        # fetch URL SHA256 DEST: download and verify, or fail.
+        fetch() {
+          if command -v curl > /dev/null; then
+            curl -fsSL --retry 3 --retry-delay 5 -o "$3" "$1" || return 1
+          else
+            wget -q -O "$3" "$1" || return 1
+          fi
+          [ "$(sha256 "$3")" = "$2" ] || { echo "checksum mismatch for $1"; return 1; }
+        }
+        # unpack ARCHIVE MEMBER DEST: extract one file from a .tar.gz or .zip.
+        unpack() {
+          local tmp="$dir/unpack.$$"
+          rm -rf "$tmp" && mkdir -p "$tmp"
+          case "$1" in
+            *.zip) unzip -q -o "$1" "$2" -d "$tmp" || return 1 ;;
+            *) tar -xzf "$1" -C "$tmp" "$2" || return 1 ;;
+          esac
+          mv -f "$tmp/$2" "$3" && chmod 0755 "$3" && rm -rf "$tmp" "$1"
+        }
+        # native PATH [MODE]: a Windows path for Windows tools (cygpath -m: C:/x, -w: C:\x).
+        native() {
+          if [ "$RUNNER_OS" = "Windows" ]; then cygpath "${2:--m}" "$1"; else printf '%s' "$1"; fi
+        }
+
+        # at_least VERSION MAJOR MINOR
+        at_least() {
+          [ -n "$1" ] && awk -v v="$1" -v M="$2" -v m="$3" 'BEGIN { split(v, p, "."); exit !((p[1] > M) || (p[1] == M && p[2] >= m)) }'
+        }
+
+        # ccache >= 4.13 runs storage helpers; older ones reject an https remote.
+        if [ "$HAYBARN_CACHE_CLIENTS_CCACHE" = "host" ]; then
+          case "${CCACHE_REMOTE_STORAGE:-}" in
+            https://*)
+              version="$(ccache --version 2>/dev/null | head -1 | grep -Eo '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
+              if ! at_least "$version" 4 13; then
+                if [ "$RUNNER_OS" = "Windows" ] \
+                  && mkdir -p "$dir/ccache-bin" \
+                  && fetch "https://github.com/ccache/ccache/releases/download/v${CCACHE_VERSION}/ccache-${CCACHE_VERSION}-windows-x86_64.zip" "$CCACHE_WINDOWS_SHA" "$dir/ccache.zip" \
+                  && unpack "$dir/ccache.zip" "ccache-${CCACHE_VERSION}-windows-x86_64/ccache.exe" "$dir/ccache-bin/ccache.exe"; then
+                  native "$dir/ccache-bin" -w >> "$GITHUB_PATH"
+                  echo "ccache ${version:-none} on PATH; put ${CCACHE_VERSION} ahead of it ($(native "$dir/ccache-bin" -w))"
+                else
+                  echo "::warning::ccache ${version:-not found} cannot use an https remote (needs >= 4.13); ccache uses only its local cache in this job"
+                  echo "CCACHE_REMOTE_STORAGE=" >> "$GITHUB_ENV"
+                  CCACHE_REMOTE_STORAGE=""
+                fi
+              else
+                echo "ccache $version"
+              fi ;;
+          esac
+        fi
+
+        # ccache https storage helper.
+        case "${CCACHE_REMOTE_STORAGE:-}" in
+          https://*)
+            name="ccache-storage-http-go-${HELPER_VERSION}-${helper_asset%%.*}"
+            archive="$dir/${name}.${helper_asset#*.}"
+            if [ -n "$helper_asset" ] \
+              && fetch "https://github.com/ccache/ccache-storage-http-go/releases/download/v${HELPER_VERSION}/ccache-storage-http-go-${HELPER_VERSION}-${helper_asset}" "$helper_sha" "$archive" \
+              && unpack "$archive" "${name}/ccache-storage-http${exe}" "$dir/ccache-storage-https${exe}"; then
+              echo "CCACHE_LIBEXEC_DIRS=$(native "$dir" -w)" >> "$GITHUB_ENV"
+              echo "ccache-storage-https ${HELPER_VERSION} (ccache-storage-http-go) in $(native "$dir")"
+            else
+              echo "::warning::ccache https storage helper unavailable on ${RUNNER_OS}/${RUNNER_ARCH}; ccache uses only its local cache in this job"
+              echo "CCACHE_REMOTE_STORAGE=" >> "$GITHUB_ENV"
+            fi ;;
+          "") echo "ccache remote storage: none" ;;
+          *) echo "ccache remote storage is not https; no helper needed" ;;
+        esac
+
+        # sccache.
+        if [ "$HAYBARN_CACHE_CLIENTS_RUST" != "true" ]; then
+          exit 0
+        fi
+        if [ -z "${SCCACHE_WEBDAV_ENDPOINT:-}" ]; then
+          echo "SCCACHE_WEBDAV_ENDPOINT is not set; building Rust without sccache"
+          exit 0
+        fi
+        sccache=""
+        existing="$(command -v sccache || true)"
+        if [ -n "$existing" ] && [ "$("$existing" --version 2>/dev/null)" = "sccache ${SCCACHE_VERSION}" ]; then
+          sccache="$existing"
+        elif [ -n "$sccache_asset" ]; then
+          name="sccache-v${SCCACHE_VERSION}-${sccache_asset%%.*}"
+          archive="$dir/${name}.${sccache_asset#*.}"
+          if fetch "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/${name}.${sccache_asset#*.}" "$sccache_sha" "$archive" \
+            && unpack "$archive" "${name}/sccache${exe}" "$dir/sccache${exe}"; then
+            sccache="$dir/sccache${exe}"
+          fi
+        fi
+        if [ -z "$sccache" ]; then
+          echo "::warning::sccache ${SCCACHE_VERSION} unavailable on ${RUNNER_OS}/${RUNNER_ARCH}; building Rust without it"
+          exit 0
+        fi
+        wrapper="$(native "$sccache")"
+        {
+          echo "RUSTC_WRAPPER=$wrapper"
+          # sccache cannot cache incremental builds.
+          echo "CARGO_INCREMENTAL=0"
+          echo "SCCACHE_IDLE_TIMEOUT=0"
+        } >> "$GITHUB_ENV"
+        echo "sccache=$wrapper" >> "$GITHUB_OUTPUT"
+        echo "$("$sccache" --version) as RUSTC_WRAPPER ($wrapper), WebDAV ${SCCACHE_WEBDAV_ENDPOINT}"

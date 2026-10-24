@@ -182,6 +182,46 @@ class CIPhaseTest(unittest.TestCase):
                     self.assertEqual(RecordingRunner(env).install_sccache(), "")
                 urlopen.assert_not_called()
 
+    def test_https_ccache_remote_maps_the_helper_into_docker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            helper_dir = workspace / ".ci/cache-clients"
+            remote = "https://cache.example/ccache/ccache @bearer-token=token"
+            env = self.environment(workspace)
+            env.update({"CCACHE_REMOTE_STORAGE": remote, "CCACHE_LIBEXEC_DIRS": str(helper_dir)})
+            # No helper installed: ccache would fail every compile, so the remote is dropped.
+            self.assertEqual(RecordingRunner(env).docker_ccache_remote(), {"CCACHE_REMOTE_STORAGE": ""})
+            helper_dir.mkdir(parents=True)
+            (helper_dir / "ccache-storage-https").write_text("")
+            self.assertEqual(
+                RecordingRunner(env).docker_ccache_remote(),
+                {
+                    "CCACHE_REMOTE_STORAGE": remote,
+                    "CCACHE_LIBEXEC_DIRS": "/duckdb_build_dir/.ci/cache-clients",
+                },
+            )
+            env["CCACHE_REMOTE_STORAGE"] = "http://cache.example/ccache"
+            self.assertEqual(
+                RecordingRunner(env).docker_ccache_remote(),
+                {"CCACHE_REMOTE_STORAGE": "http://cache.example/ccache"},
+            )
+
+    def test_host_sccache_is_reported_and_stopped_after_the_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory), platform="macos", architecture="osx_arm64")
+            env["RUSTC_WRAPPER"] = "/opt/cache-clients/sccache"
+            env["CI_PREBUILT_DUCKDB_SOURCE"] = "disabled"
+            runner = RecordingRunner(env)
+            with mock.patch.object(runner, "build_macos", side_effect=RuntimeError("boom")), mock.patch(
+                "ci_phase.subprocess.run"
+            ) as run:
+                with self.assertRaises(RuntimeError):
+                    runner.build()
+            self.assertEqual(
+                [call.args[0] for call in run.call_args_list],
+                [["/opt/cache-clients/sccache", "--show-stats"], ["/opt/cache-clients/sccache", "--stop-server"]],
+            )
+
     def test_boolean_and_toolchain_parsing(self):
         self.assertTrue(is_true("true"))
         self.assertTrue(is_true("1"))

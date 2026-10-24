@@ -813,6 +813,27 @@ class PhaseRunner:
         (destination / "sccache").chmod(0o755)
         return "/duckdb_build_dir/.ci/sccache/sccache"
 
+    def docker_ccache_remote(self) -> dict[str, str]:
+        """CCACHE_REMOTE_STORAGE (and the https helper's directory) for the build container."""
+        remote = self.value("CCACHE_REMOTE_STORAGE")
+        if not remote.startswith("https://"):
+            return {"CCACHE_REMOTE_STORAGE": remote}
+        # Haybarn: ccache reaches an https remote only through the ccache-storage-https helper
+        # (.github/actions/cache-clients installs it under the workspace) and fails every
+        # compile without it, so map its directory into the container or drop the remote.
+        helper_dir = self.value("CCACHE_LIBEXEC_DIRS")
+        try:
+            relative = Path(helper_dir).resolve().relative_to(self.workspace.resolve()) if helper_dir else None
+        except ValueError:
+            relative = None
+        if relative is None or not (self.workspace / relative / "ccache-storage-https").is_file():
+            print("ccache https storage helper not under the workspace; the build container uses only its local ccache.", flush=True)
+            return {"CCACHE_REMOTE_STORAGE": ""}
+        return {
+            "CCACHE_REMOTE_STORAGE": remote,
+            "CCACHE_LIBEXEC_DIRS": f"/duckdb_build_dir/{relative.as_posix()}",
+        }
+
     def create_docker_environment(self) -> None:
         values = {
             "VCPKG_BINARY_SOURCES": self.value("VCPKG_BINARY_SOURCES"),
@@ -857,7 +878,7 @@ class PhaseRunner:
             "CXX": "g++",
             "CCACHE_DIR": "/ccache_dir",
             # Haybarn: the shared R2 ccache and its tuning, inside the build container.
-            "CCACHE_REMOTE_STORAGE": self.value("CCACHE_REMOTE_STORAGE"),
+            **self.docker_ccache_remote(),
             "CCACHE_BASEDIR": "/duckdb_build_dir",
             "CCACHE_NOHASHDIR": self.value("CCACHE_NOHASHDIR"),
             "CCACHE_SLOPPINESS": self.value("CCACHE_SLOPPINESS"),
@@ -878,6 +899,8 @@ class PhaseRunner:
                     "SCCACHE_WEBDAV_ENDPOINT": self.value("SCCACHE_WEBDAV_ENDPOINT"),
                     "SCCACHE_WEBDAV_TOKEN": self.value("SCCACHE_WEBDAV_TOKEN"),
                     "CARGO_INCREMENTAL": "0",
+                    # One server for the whole build, so --show-stats counts all of it.
+                    "SCCACHE_IDLE_TIMEOUT": "0",
                 }
             )
         prebuilt_library = self.value("DUCKDB_PREBUILT_LIBRARY")
@@ -941,7 +964,8 @@ class PhaseRunner:
             build = [
                 "sh",
                 "-c",
-                '"$@"; status=$?; "$RUSTC_WRAPPER" --show-stats || true; exit $status',
+                '"$@"; status=$?; "$RUSTC_WRAPPER" --show-stats || true; '
+                '"$RUSTC_WRAPPER" --stop-server > /dev/null 2>&1 || true; exit $status',
                 "sh",
                 *build,
             ]
@@ -1037,7 +1061,30 @@ class PhaseRunner:
             # An empty source preserves compatibility with workflows that only
             # configure CI_PREBUILT_DUCKDB_ARTIFACT.
             self.prepare_prebuilt_duckdb()
-        getattr(self, f"build_{self.platform}")()
+        try:
+            getattr(self, f"build_{self.platform}")()
+        finally:
+            self.report_sccache()
+
+    def report_sccache(self) -> None:
+        """Print and stop the host's sccache server (RUSTC_WRAPPER from .github/actions/cache-clients)."""
+        # Haybarn: Linux docker builds report from inside their container (build_linux).
+        wrapper = self.value("RUSTC_WRAPPER")
+        if not wrapper or Path(wrapper).name not in {"sccache", "sccache.exe"}:
+            return
+        for arguments in (["--show-stats"], ["--stop-server"]):
+            try:
+                subprocess.run(
+                    [wrapper, *arguments],
+                    check=False,
+                    env=self.env,
+                    stdout=None if arguments == ["--show-stats"] else subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT,
+                    timeout=120,
+                )
+            except (OSError, subprocess.TimeoutExpired) as error:
+                print(f"sccache {' '.join(arguments)} failed: {error}", flush=True)
+        sys.stdout.flush()
 
     def _run_tests(self) -> None:
         environment = self.build_environment()

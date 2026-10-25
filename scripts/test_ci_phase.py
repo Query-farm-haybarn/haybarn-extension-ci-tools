@@ -74,7 +74,7 @@ class CIPhaseTest(unittest.TestCase):
         env = self.environment(workspace, architecture=architecture)
         env.update(
             {
-                "CI_LINUX_IMAGE_VERSION": "20261025-0cd72d7d",
+                "CI_LINUX_IMAGE_VERSION": "20261025-32e1e3c3",
                 "CI_VCPKG_COMMIT": "cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3",
                 "CI_VCPKG_URL": "https://github.com/microsoft/vcpkg.git",
                 "CI_EXTRA_TOOLCHAINS": toolchains,
@@ -85,14 +85,14 @@ class CIPhaseTest(unittest.TestCase):
     def test_prebuilt_linux_image_selects_the_smallest_covering_variant(self):
         registry = "ghcr.io/query-farm-haybarn/haybarn-ci"
         cases = [
-            ("linux_amd64", "", f"{registry}/manylinux_2_28_amd64_main:20261025-0cd72d7d"),
-            ("linux_amd64", ";parser_tools;python3;", f"{registry}/manylinux_2_28_amd64_main:20261025-0cd72d7d"),
-            ("linux_arm64", ";rust;", f"{registry}/manylinux_2_28_aarch64_rust:20261025-0cd72d7d"),
+            ("linux_amd64", "", f"{registry}/manylinux_2_28_amd64_main:20261025-32e1e3c3"),
+            ("linux_amd64", ";parser_tools;python3;", f"{registry}/manylinux_2_28_amd64_main:20261025-32e1e3c3"),
+            ("linux_arm64", ";rust;", f"{registry}/manylinux_2_28_aarch64_rust:20261025-32e1e3c3"),
             # labels the inline image ignores don't force an inline build
-            ("linux_amd64", ";vcpkg;", f"{registry}/manylinux_2_28_amd64_main:20261025-0cd72d7d"),
-            ("linux_amd64", ";cmake;omp;openssl;rust;", f"{registry}/manylinux_2_28_amd64_rust:20261025-0cd72d7d"),
-            ("linux_amd64_musl", ";rust;go;", f"{registry}/alpine_3_22_amd64_full:20261025-0cd72d7d"),
-            ("linux_arm64_musl", ";multimedia;unixodbc;", f"{registry}/alpine_3_22_aarch64_full:20261025-0cd72d7d"),
+            ("linux_amd64", ";vcpkg;", f"{registry}/manylinux_2_28_amd64_main:20261025-32e1e3c3"),
+            ("linux_amd64", ";cmake;omp;openssl;rust;", f"{registry}/manylinux_2_28_amd64_rust:20261025-32e1e3c3"),
+            ("linux_amd64_musl", ";rust;go;", f"{registry}/alpine_3_22_amd64_full:20261025-32e1e3c3"),
+            ("linux_arm64_musl", ";multimedia;unixodbc;", f"{registry}/alpine_3_22_aarch64_full:20261025-32e1e3c3"),
         ]
         with tempfile.TemporaryDirectory() as directory:
             for architecture, toolchains, expected in cases:
@@ -118,7 +118,7 @@ class CIPhaseTest(unittest.TestCase):
             runner = RecordingRunner(env)
             runner.build_linux()
             commands = [command for command, _ in runner.commands]
-            image = "ghcr.io/query-farm-haybarn/haybarn-ci/manylinux_2_28_amd64_rust:20261025-0cd72d7d"
+            image = "ghcr.io/query-farm-haybarn/haybarn-ci/manylinux_2_28_amd64_rust:20261025-32e1e3c3"
             self.assertIn(["docker", "pull", image], commands)
             self.assertIn(["docker", "tag", image, "duckdb/linux_amd64"], commands)
             self.assertFalse(any(command[:2] == ["docker", "build"] for command in commands if isinstance(command, list)))

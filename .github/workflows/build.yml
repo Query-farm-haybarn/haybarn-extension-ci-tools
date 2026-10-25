@@ -81,7 +81,7 @@ on:
         description: haybarn-ci container image version
         required: false
         type: string
-        default: 20261025-0cd72d7d # haybarn-ci haybarn-images run 40162965342 (alias v2.0.0)
+        default: 20261025-32e1e3c3 # haybarn-ci haybarn-images run 40170132620 (alias v2.0.0)
       skip_tests:
         description: Skip tests
         required: false

@@ -250,7 +250,7 @@ on:
         description: haybarn-ci build image tag that Linux jobs pull instead of building docker/<arch> when it covers the job's toolchains and vcpkg; empty always builds inline
         required: false
         type: string
-        default: 20261025-0cd72d7d
+        default: 20261025-32e1e3c3
       use_prebuilt_images:
         required: false
         type: boolean

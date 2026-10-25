@@ -110,6 +110,18 @@ ifneq ($(DUCKDB_WASM_PLATFORM),)
 	endif
 endif
 
+# Haybarn: base.Makefile links wasm_threads side modules with shared memory, which every object
+# must be compiled for (atomics, bulk memory). The quoted comparisons above never match and their
+# CMAKE_CXX_FLAGS never reaches cmake (upstream as well; it links non-shared), so compile with
+# -pthread through emcc's own environment, which also covers sources the extension builds in
+# FetchContent / ExternalProject subprojects. vcpkg ports already use the threads triplet.
+# ccache does not hash the environment, so a namespace keeps it from returning objects cached
+# before this flag existed.
+ifeq ($(DUCKDB_WASM_PLATFORM),wasm_threads)
+export EMCC_CFLAGS := $(EMCC_CFLAGS) -pthread
+export CCACHE_NAMESPACE := haybarn-wasm-threads-pthread
+endif
+
 #############################################
 ### Build targets
 #############################################

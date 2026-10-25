@@ -809,6 +809,9 @@ jobs:
       AWS_REQUEST_CHECKSUM_CALCULATION: when_required
       DUCKDB_PLATFORM: ${{ matrix.duckdb_arch }}
       WASM_EXTENSIONS: 1
+      # Haybarn: the image's python3 is Ubuntu's (externally managed); let builds that pip install
+      # outside a venv do so, as they could with setup-python's.
+      PIP_BREAK_SYSTEM_PACKAGES: 1
       CI_PLATFORM: wasm
       CI_MATRIX_RUNNER: ${{ matrix.runner }}
 
@@ -832,10 +835,9 @@ jobs:
           ref: ${{ inputs.ci_tools_version }}
           repository: ${{ inputs.override_ci_tools_repository }}
 
-      - name: Checkout / Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: '3.11'
+      # Haybarn: no setup-python here. Its CPython comes from the host's tool cache (mounted at
+      # /__t) and has no working ssl module in this image ("unknown url type: https" for any
+      # download, e.g. ducksassy's SDK); the image's python3 (Ubuntu 24.04, 3.12) has one.
 
       - name: Checkout / DuckDB from calling workflow
         if: ${{ inputs.set_caller_as_duckdb }}
@@ -901,6 +903,11 @@ jobs:
         shell: bash
         run: |
           echo 'CARGO_UNSTABLE_BUILD_STD=std,panic_abort' >> "$GITHUB_ENV"
+          # Over the extension's rust-toolchain.toml and the image's default 1.86.0, which Corrosion
+          # otherwise picks: stable ignores CARGO_UNSTABLE_BUILD_STD and links its precompiled,
+          # non-atomic, legacy-EH std (wasm_threads: "--shared-memory is disallowed by alloc-...";
+          # wasm_eh: "DISABLE_EXCEPTION_CATCHING=0 is not compatible with -fwasm-exceptions").
+          echo 'RUSTUP_TOOLCHAIN=nightly-2026-05-20' >> "$GITHUB_ENV"
           # target-scoped, so host build scripts and proc-macros stay non-atomic
           if [ "${{ matrix.duckdb_arch }}" = "wasm_threads" ]; then
             echo 'CARGO_TARGET_WASM32_UNKNOWN_EMSCRIPTEN_RUSTFLAGS=-Ctarget-feature=+atomics,+bulk-memory,+mutable-globals' >> "$GITHUB_ENV"

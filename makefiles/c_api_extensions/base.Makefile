@@ -108,20 +108,20 @@ TEST_RUNNER_BASE=$(TEST_RUNNER) --test-dir test/sql $(EXTRA_EXTENSIONS_PARAM)
 TEST_RUNNER_DEBUG=$(TEST_RUNNER_BASE) --external-extension build/debug/$(EXTENSION_NAME).duckdb_extension
 TEST_RUNNER_RELEASE=$(TEST_RUNNER_BASE) --external-extension build/release/$(EXTENSION_NAME).duckdb_extension
 
-# Haybarn: test against the Haybarn engine fork (haybarn-cli on PyPI), not
-# upstream duckdb. haybarn-cli is an ABI-compatible drop-in — it still ships
-# the `duckdb` Python module that duckdb_sqllogictest imports — but its
-# library_version matches the binaries this CI builds, so the engine loader
-# accepts them. All currently-published releases are pre-release (1.5.Xrcn),
-# so --pre is required for pip to consider them. Default is latest; CI pins
-# DUCKDB_TEST_VERSION (e.g. '2.0.0rc1') from the haybarn-v* engine tag.
+# Haybarn: test against the Haybarn engine (the `haybarn` package on PyPI), not
+# upstream duckdb, whose library_version only happens to match. `haybarn` ships
+# its module as `haybarn`; duckdb_sqllogictest (and some extensions' own test
+# scripts) import `duckdb`, so configure/venv installs a `duckdb` shim that
+# resolves to it (scripts/haybarn_duckdb_alias.py) and installs the test runner
+# without its `duckdb` dependency, which would otherwise put upstream's wheel in
+# the venv. (haybarn-cli, used here before, is only the CLI binary: the tests ran
+# on upstream's wheel.) CI pins DUCKDB_TEST_VERSION (e.g. '2.0.0rc6') from the
+# haybarn-v* engine tag; releases are pre-release, so unpinned installs need --pre.
 #
-# Exception: haybarn-cli does not (yet) publish a win_arm64 wheel — the 1.5.3rc4
-# release only ships {macos arm64/x86_64, manylinux x86_64/aarch64, musllinux
-# x86_64/aarch64, win_amd64}. Fall back to upstream `duckdb` on that arch so
-# tests still run; the OVERRIDE_GIT_DESCRIBE=vX.Y.Z label means the engine
-# loader's library_version check still passes against upstream X.Y.Z. Remove
-# this branch once haybarn-cli ships a win_arm64 wheel.
+# Exception: `haybarn` does not publish a win_arm64 wheel (2.0.0rc6 ships macOS
+# arm64, manylinux x86_64/aarch64 and win_amd64). Fall back to upstream `duckdb`
+# on that arch so tests still run; the OVERRIDE_GIT_DESCRIBE=vX.Y.Z label means
+# the engine loader's library_version check still passes against upstream X.Y.Z.
 ifeq ($(DUCKDB_PLATFORM),windows_arm64)
 DUCKDB_PIP_INSTALL?=duckdb
 ifeq ($(DUCKDB_TEST_VERSION),main)
@@ -134,14 +134,14 @@ ifeq ($(DUCKDB_GIT_VERSION),main)
 	DUCKDB_PIP_INSTALL=--pre duckdb
 endif
 else
-DUCKDB_PIP_INSTALL?=--pre haybarn-cli
+DUCKDB_PIP_INSTALL?=--pre haybarn
 ifeq ($(DUCKDB_TEST_VERSION),main)
-	DUCKDB_PIP_INSTALL=--pre haybarn-cli
+	DUCKDB_PIP_INSTALL=--pre haybarn
 else ifneq ($(DUCKDB_TEST_VERSION),)
-	DUCKDB_PIP_INSTALL=haybarn-cli==$(DUCKDB_TEST_VERSION)
+	DUCKDB_PIP_INSTALL=haybarn==$(DUCKDB_TEST_VERSION)
 endif
 ifeq ($(DUCKDB_GIT_VERSION),main)
-	DUCKDB_PIP_INSTALL=--pre haybarn-cli
+	DUCKDB_PIP_INSTALL=--pre haybarn
 endif
 endif
 
@@ -287,8 +287,11 @@ venv: configure/venv
 configure/venv:
 	$(PYTHON_BIN) -m venv configure/venv
 	$(PYTHON_VENV_BIN) -m pip install $(DUCKDB_PIP_INSTALL)
-	$(PYTHON_VENV_BIN) -m pip install git+https://github.com/duckdb/duckdb-sqllogictest-python@2ac8dbc012ddbd96a57dca37784fd8ee3c0eb021
-	$(PYTHON_VENV_BIN) -m pip install packaging
+	$(PYTHON_VENV_BIN) -m pip install --no-deps git+https://github.com/duckdb/duckdb-sqllogictest-python@2ac8dbc012ddbd96a57dca37784fd8ee3c0eb021
+	$(PYTHON_VENV_BIN) -m pip install termcolor packaging
+ifneq ($(findstring haybarn,$(DUCKDB_PIP_INSTALL)),)
+	$(PYTHON_VENV_BIN) extension-ci-tools/scripts/haybarn_duckdb_alias.py
+endif
 
 #############################################
 ### Configure

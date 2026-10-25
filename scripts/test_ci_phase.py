@@ -115,6 +115,7 @@ class CIPhaseTest(unittest.TestCase):
     def test_build_linux_pulls_the_prebuilt_image_instead_of_building_it(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.prebuilt_image_environment(Path(directory), toolchains=";rust;")
+            env.update({"VCPKG_TARGET_TRIPLET": "x64-linux-release", "VCPKG_HOST_TRIPLET": "x64-linux-release"})
             runner = RecordingRunner(env)
             runner.build_linux()
             commands = [command for command, _ in runner.commands]
@@ -124,6 +125,8 @@ class CIPhaseTest(unittest.TestCase):
             self.assertFalse(any(command[:2] == ["docker", "build"] for command in commands if isinstance(command, list)))
             docker_env = (Path(directory) / "docker_env.txt").read_text()
             self.assertIn("CC=gcc\n", docker_env)
+            self.assertIn("VCPKG_TARGET_TRIPLET=x64-linux-release\n", docker_env)
+            self.assertIn("VCPKG_HOST_TRIPLET=x64-linux-release\n", docker_env)
             self.assertIn("CCACHE_DIR=/ccache_dir\n", docker_env)
 
     def test_nested_engine_submodules_link_to_the_top_level_checkouts(self):

@@ -475,11 +475,37 @@ jobs:
         with:
           ccache: docker
 
+      # Haybarn: the Linux build's packages over the cache Worker's 100 MB limit (grpc, protobuf)
+      # need the same direct R2 write as macOS/Windows, but the build runs in the image, which has
+      # no AWS CLI. vcpkg also writes packages into the bind-mounted workspace instead, and the
+      # step after the build uploads them from the runner under the same <sha>.zip keys.
+      - name: Setup / vcpkg cache writes to R2
+        if: ${{ env.AWS_ACCESS_KEY_ID != '' && inputs.vcpkg_s3_cache_prefix != '' }}
+        run: |
+          if ! command -v aws > /dev/null; then
+            echo "::warning::no AWS CLI on this runner; large vcpkg packages are not cached"
+            exit 0
+          fi
+          aws --version
+          mkdir -p .ci/vcpkg-export
+          echo "VCPKG_BINARY_SOURCES=${VCPKG_BINARY_SOURCES};files,/duckdb_build_dir/.ci/vcpkg-export,write" >> "$GITHUB_ENV"
+          echo "AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-auto}" >> "$GITHUB_ENV"
+
       - name: Setup
         run: python3 extension-ci-tools/scripts/ci_phase.py setup
 
       - name: Build
         run: python3 extension-ci-tools/scripts/ci_phase.py build
+
+      - name: Upload / vcpkg packages to R2
+        if: ${{ !cancelled() && env.AWS_ACCESS_KEY_ID != '' && inputs.vcpkg_s3_cache_prefix != '' }}
+        continue-on-error: true
+        run: |
+          [ -d .ci/vcpkg-export ] || exit 0
+          find .ci/vcpkg-export -name '*.zip' | while read -r zip; do
+            aws s3 cp --only-show-errors "$zip" "${{ inputs.vcpkg_s3_cache_prefix }}$(basename "$zip")"
+            echo "uploaded $(basename "$zip") ($(du -h "$zip" | cut -f1))"
+          done
 
       - name: Test
         timeout-minutes: ${{ inputs.test_timeout_minutes }}

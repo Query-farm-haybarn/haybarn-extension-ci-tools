@@ -237,6 +237,12 @@ on:
         required: false
         type: string
         default: ""
+      # Haybarn: S3 prefix (the R2 bucket behind the vcpkg cache Worker) that the macOS and Windows
+      # legs also write vcpkg packages to, when the VCPKG_CACHING_AWS_* secrets are set.
+      vcpkg_s3_cache_prefix:
+        required: false
+        type: string
+        default: "s3://haybarn-build-cache/"
       # Haybarn 1.5 inputs, accepted so 1.5-era callers keep starting; the 2.0
       # workflow ignores them. matrix_parse_script was replaced by extbuild.
       # use_prebuilt_images / use_prebuilt_wasm_image / wasm_image_variant are
@@ -590,6 +596,19 @@ jobs:
         with:
           rust: ${{ env.CI_HAS_RUST }}
 
+      # Haybarn: the cache Worker cannot take request bodies over Cloudflare's 100 MB limit, so
+      # vcpkg's uploads of the big Windows/macOS packages (arrow, grpc, protobuf) went to "0 binary
+      # cache(s)" and were rebuilt from source every run. Also write straight to the Worker's R2
+      # bucket with the AWS CLI; both name a package <sha>.zip at the bucket root, so reads through
+      # the Worker find it. Needs a token scoped to that bucket (VCPKG_CACHING_AWS_*); off without one.
+      - name: Setup / vcpkg cache writes to R2
+        if: ${{ env.AWS_ACCESS_KEY_ID != '' && inputs.vcpkg_s3_cache_prefix != '' }}
+        shell: bash
+        run: |
+          echo "VCPKG_BINARY_SOURCES=${VCPKG_BINARY_SOURCES};x-aws,${{ inputs.vcpkg_s3_cache_prefix }},write" >> "$GITHUB_ENV"
+          echo "AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-auto}" >> "$GITHUB_ENV"
+          aws --version
+
       - name: Setup
         run: python3 extension-ci-tools/scripts/ci_phase.py setup
 
@@ -726,6 +745,19 @@ jobs:
         uses: ./extension-ci-tools/.github/actions/cache-clients
         with:
           rust: ${{ env.CI_HAS_RUST }}
+
+      # Haybarn: the cache Worker cannot take request bodies over Cloudflare's 100 MB limit, so
+      # vcpkg's uploads of the big Windows/macOS packages (arrow, grpc, protobuf) went to "0 binary
+      # cache(s)" and were rebuilt from source every run. Also write straight to the Worker's R2
+      # bucket with the AWS CLI; both name a package <sha>.zip at the bucket root, so reads through
+      # the Worker find it. Needs a token scoped to that bucket (VCPKG_CACHING_AWS_*); off without one.
+      - name: Setup / vcpkg cache writes to R2
+        if: ${{ env.AWS_ACCESS_KEY_ID != '' && inputs.vcpkg_s3_cache_prefix != '' }}
+        shell: bash
+        run: |
+          echo "VCPKG_BINARY_SOURCES=${VCPKG_BINARY_SOURCES};x-aws,${{ inputs.vcpkg_s3_cache_prefix }},write" >> "$GITHUB_ENV"
+          echo "AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-auto}" >> "$GITHUB_ENV"
+          aws --version
 
       - name: Setup / Rtools
         if: ${{ matrix.duckdb_arch == 'windows_amd64_rtools' || matrix.duckdb_arch == 'windows_amd64_mingw' }}

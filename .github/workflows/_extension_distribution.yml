@@ -231,6 +231,12 @@ on:
         required: false
         type: number
         default: 45
+      # Haybarn: extra CMake flags (EXT_FLAGS) for the wasm legs only, e.g. to turn off an
+      # extension's own pin of an older Rust for upstream's older emscripten.
+      wasm_extra_cmake_flags:
+        required: false
+        type: string
+        default: ""
       # Haybarn 1.5 inputs, accepted so 1.5-era callers keep starting; the 2.0
       # workflow ignores them. matrix_parse_script was replaced by extbuild.
       # use_prebuilt_images / use_prebuilt_wasm_image / wasm_image_variant are
@@ -812,6 +818,7 @@ jobs:
       # Haybarn: the image's python3 is Ubuntu's (externally managed); let builds that pip install
       # outside a venv do so, as they could with setup-python's.
       PIP_BREAK_SYSTEM_PACKAGES: 1
+      EXT_FLAGS: ${{ inputs.wasm_extra_cmake_flags }}
       CI_PLATFORM: wasm
       CI_MATRIX_RUNNER: ${{ matrix.runner }}
 

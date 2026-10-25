@@ -115,11 +115,14 @@ endif
 # CMAKE_CXX_FLAGS never reaches cmake (upstream as well; it links non-shared), so compile with
 # -pthread through emcc's own environment, which also covers sources the extension builds in
 # FetchContent / ExternalProject subprojects. vcpkg ports already use the threads triplet.
+# -fwasm-exceptions as well, as the engine and the dead flags above: it makes setjmp/longjmp
+# native wasm too, where the legacy emscripten helpers it otherwise links
+# (emscripten_exception_builtins.o, duckhts) are not built for shared memory.
 # ccache does not hash the environment, so a namespace keeps it from returning objects cached
-# before this flag existed.
+# before these flags existed.
 ifeq ($(DUCKDB_WASM_PLATFORM),wasm_threads)
-export EMCC_CFLAGS := $(EMCC_CFLAGS) -pthread
-export CCACHE_NAMESPACE := haybarn-wasm-threads-pthread
+export EMCC_CFLAGS := $(EMCC_CFLAGS) -pthread -fwasm-exceptions
+export CCACHE_NAMESPACE := haybarn-wasm-threads-pthread-eh
 endif
 
 #############################################

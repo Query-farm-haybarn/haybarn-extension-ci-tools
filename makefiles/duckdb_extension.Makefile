@@ -171,6 +171,16 @@ ifneq ($(TIDY_CHECKS),)
         TIDY_PERFORM_CHECKS := '-checks=${TIDY_CHECKS}'
 endif
 
+# Haybarn: the engine builds its CLI as `haybarn` (tools/shell/CMakeLists.txt),
+# but extension tests conventionally drive build/<config>/duckdb[.exe], as
+# DuckDB's extension template documents. Keep a copy under the DuckDB name so
+# those tests run unmodified. A copy, not a symlink, so it also works on Windows.
+define haybarn_duckdb_cli_alias
+	@for exe in "" .exe; do \
+		if [ -f "$(1)/haybarn$$exe" ]; then cp -p "$(1)/haybarn$$exe" "$(1)/duckdb$$exe"; fi; \
+	done
+endef
+
 clangd: ${EXTENSION_CONFIG_STEP}
 	cmake $(GENERATOR) $(BUILD_FLAGS) $(EXT_DEBUG_FLAGS) $(VCPKG_MANIFEST_FLAGS) -DCMAKE_BUILD_TYPE=Debug -S $(DUCKDB_SRCDIR) -B .cache/clangd/debug
 
@@ -178,21 +188,25 @@ debug: ${EXTENSION_CONFIG_STEP}
 	mkdir -p build/debug
 	cmake $(GENERATOR) $(BUILD_FLAGS) $(EXT_DEBUG_FLAGS) $(VCPKG_MANIFEST_FLAGS) -DCMAKE_BUILD_TYPE=Debug -S $(DUCKDB_SRCDIR) -B build/debug
 	cmake --build build/debug --config Debug
+	$(call haybarn_duckdb_cli_alias,build/debug)
 
 release: ${EXTENSION_CONFIG_STEP}
 	mkdir -p build/release
 	cmake $(GENERATOR) $(BUILD_FLAGS) $(EXT_RELEASE_FLAGS) $(VCPKG_MANIFEST_FLAGS) -DCMAKE_BUILD_TYPE=Release -S $(DUCKDB_SRCDIR) -B build/release
 	cmake --build build/release --config Release
+	$(call haybarn_duckdb_cli_alias,build/release)
 
 relassert: ${EXTENSION_CONFIG_STEP}
 	mkdir -p build/relassert
 	cmake $(GENERATOR) $(BUILD_FLAGS) $(EXT_RELEASE_FLAGS) $(VCPKG_MANIFEST_FLAGS) -DCMAKE_BUILD_TYPE=RelWithDebInfo -S $(DUCKDB_SRCDIR) -DFORCE_ASSERT=1 -B build/relassert
 	cmake --build build/relassert --config RelWithDebInfo
+	$(call haybarn_duckdb_cli_alias,build/relassert)
 
 reldebug: ${EXTENSION_CONFIG_STEP}
 	mkdir -p build/reldebug
 	cmake $(GENERATOR) $(BUILD_FLAGS) $(EXT_RELEASE_FLAGS) $(VCPKG_MANIFEST_FLAGS) -DCMAKE_BUILD_TYPE=RelWithDebInfo -S $(DUCKDB_SRCDIR) -B build/reldebug
 	cmake --build build/reldebug
+	$(call haybarn_duckdb_cli_alias,build/reldebug)
 
 # Main tests
 test: test_release

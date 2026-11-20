@@ -98,6 +98,11 @@ on:
         required: false
         type: string
         default: ""
+      # Directory containing the extension build inside the checked-out repository
+      build_directory:
+        required: false
+        type: string
+        default: "."
       # Override the repo for the CI tools (for testing CI tools itself)
       override_ci_tools_repository:
         required: false
@@ -195,7 +200,7 @@ on:
         required: false
         type: string
         default: ""
-      # Override vcpkg overlay ports directory (relative to repo root, mounted at /duckdb_build_dir in Docker)
+      # Override vcpkg overlay ports directory (relative to the extension build directory)
       vcpkg_overlay_ports:
         required: false
         type: string
@@ -309,6 +314,9 @@ env:
   # from .github/actions/cache-clients (the wasm image ships it).
   SCCACHE_WEBDAV_ENDPOINT: https://haybarn-vcpkg-cache.rusty-bb6.workers.dev/sccache/
   SCCACHE_WEBDAV_TOKEN: ${{ secrets.vcpkg_token }}
+  DETECT_RUNNER_EXTENSION_ALLOWLIST: '["sirius_cuda12", "sirius_cuda13"]'
+  CI_BUILD_DIRECTORY: ${{ inputs.build_directory }}
+  CI_TOOLS_PATH: ${{ github.workspace }}/${{ inputs.build_directory }}/extension-ci-tools
   CI_EXTENSION_NAME: ${{ inputs.extension_name }}
   CI_EXTENSION_CANONICAL: ${{ inputs.extension_canonical }}
   DUCKDB_VERSION: ${{ inputs.duckdb_version }}
@@ -337,7 +345,6 @@ env:
   CI_ARTIFACT_POSTFIX: ${{ inputs.artifact_postfix }}
   CI_RUST_LOGS: ${{ inputs.rust_logs }}
   CI_RUN_DISK_CLEAN_STEP: ${{ inputs.run_disk_clean_step }}
-  CI_USE_DEFAULT_RUNNERS: ${{ inputs.runners == '{}' }}
   CI_FETCH_PREBUILT_DUCKDB: true
   # Haybarn: the extension checkouts above are shallow and skip submodules;
   # ci_phase.py checkout completes them (see PhaseRunner.prepare_extension).
@@ -352,6 +359,7 @@ jobs:
       windows_matrix: ${{ steps.compute-matrix.outputs.windows_matrix }}
       osx_matrix: ${{ steps.compute-matrix.outputs.osx_matrix }}
       wasm_matrix: ${{ steps.compute-matrix.outputs.wasm_matrix }}
+      use_default_runners: ${{ inputs.runners == '{}' && steps.detect-runners.outputs.runners == '' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         name: Checkout Extension CI tools
@@ -359,6 +367,25 @@ jobs:
           path: 'extension-ci-tools'
           ref: ${{ inputs.ci_tools_version }}
           repository: ${{ inputs.override_ci_tools_repository }}
+
+      - id: check-runner-allowlist
+        name: Check runner detection allowlist
+        if: ${{ inputs.runners == '{}' }}
+        shell: bash
+        env:
+          EXTENSION_NAME: ${{ inputs.extension_name }}
+        run: |
+          if jq -e --arg extension_name "$EXTENSION_NAME" 'index($extension_name) != null' \
+            <<< "$DETECT_RUNNER_EXTENSION_ALLOWLIST" > /dev/null; then
+            echo "allowed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: detect-runners
+        name: Detect runners
+        if: ${{ inputs.runners == '{}' && steps.check-runner-allowlist.outputs.allowed == 'true' }}
+        uses: duckdb/duckdb-ci/detect-runners@8302ae16ba47cc90bc9ba77b3cf825beab371b4d # main
 
       - name: Setup Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
@@ -374,13 +401,15 @@ jobs:
 
       - id: compute-matrix
         name: Compute extension build matrix
+        env:
+          RUNNERS: ${{ steps.detect-runners.outputs.runners || inputs.runners }}
         run: |
           make -C extension-ci-tools/scripts/extbuild test build -sj4
           extension-ci-tools/scripts/extbuild/build/extbuild matrix \
             --input extension-ci-tools/config/distribution_matrix.json \
             --exclude "${{ inputs.exclude_archs }}" \
             --opt-in "${{ inputs.opt_in_archs }}" \
-            --runners '${{ inputs.runners }}' \
+            --runners "$RUNNERS" \
             --reduced-ci-mode "${{ inputs.reduced_ci_mode }}" \
             --out "$GITHUB_OUTPUT"
           echo "extbuild matrix output:"
@@ -410,6 +439,7 @@ jobs:
       DUCKDB_PLATFORM: ${{ matrix.duckdb_arch }}
       CI_PLATFORM: linux
       CI_MATRIX_RUNNER: ${{ matrix.runner }}
+      CI_USE_DEFAULT_RUNNERS: ${{ needs.generate_matrix.outputs.use_default_runners }}
 
     steps:
       - name: Checkout / Extension repository
@@ -427,7 +457,7 @@ jobs:
       - name: Checkout / Extension CI tools
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          path: extension-ci-tools
+          path: ${{ inputs.build_directory }}/extension-ci-tools
           ref: ${{ inputs.ci_tools_version }}
           repository: ${{ inputs.override_ci_tools_repository }}
 
@@ -435,12 +465,12 @@ jobs:
         if: ${{ inputs.set_caller_as_duckdb }}
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          path: duckdb
+          path: ${{ inputs.build_directory }}/duckdb
           fetch-tags: true
           fetch-depth: 0
 
       - name: Setup / Free disk space
-        if: ${{ inputs.run_disk_clean_step && env.USE_DEFAULT_RUNNERS == 'true' }}
+        if: ${{ inputs.run_disk_clean_step && env.CI_USE_DEFAULT_RUNNERS == 'true' }}
         uses: endersonmenezes/free-disk-space@7901478139cff6e9d44df5972fd8ab8fcade4db1 # v3.2.2
         continue-on-error: true
         with:
@@ -453,7 +483,7 @@ jobs:
       # remain usable inside the bind-mounted Docker workspace.
       - name: Checkout / Prepare sources
         id: prepare_sources
-        run: python3 extension-ci-tools/scripts/ci_phase.py checkout
+        run: python3 "$CI_TOOLS_PATH/scripts/ci_phase.py" checkout
 
       - name: Setup / Ccache
         uses: hendrikmuhs/ccache-action@d62db5f07c26379fc4b4e0916f098a92573c3b03 # v1.2.23
@@ -492,10 +522,10 @@ jobs:
           echo "AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-auto}" >> "$GITHUB_ENV"
 
       - name: Setup
-        run: python3 extension-ci-tools/scripts/ci_phase.py setup
+        run: python3 "$CI_TOOLS_PATH/scripts/ci_phase.py" setup
 
       - name: Build
-        run: python3 extension-ci-tools/scripts/ci_phase.py build
+        run: python3 "$CI_TOOLS_PATH/scripts/ci_phase.py" build
 
       - name: Upload / vcpkg packages to R2
         if: ${{ !cancelled() && env.AWS_ACCESS_KEY_ID != '' && inputs.vcpkg_s3_cache_prefix != '' }}
@@ -509,11 +539,11 @@ jobs:
 
       - name: Test
         timeout-minutes: ${{ inputs.test_timeout_minutes }}
-        run: python3 extension-ci-tools/scripts/ci_phase.py test
+        run: python3 "$CI_TOOLS_PATH/scripts/ci_phase.py" test
 
       - name: Upload / Prepare artifacts
         id: artifacts
-        run: python3 extension-ci-tools/scripts/ci_phase.py upload
+        run: python3 "$CI_TOOLS_PATH/scripts/ci_phase.py" upload
 
       - name: Upload
         # Haybarn: retries the artifact control-plane registration, which
@@ -544,8 +574,8 @@ jobs:
       VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
       VCPKG_TARGET_TRIPLET: ${{ matrix.vcpkg_target_triplet }}
       VCPKG_HOST_TRIPLET: ${{ matrix.vcpkg_host_triplet }}
-      VCPKG_OVERLAY_PORTS: ${{ github.workspace }}/extension-ci-tools/vcpkg_ports
-      VCPKG_OVERLAY_TRIPLETS: ${{ github.workspace }}/extension-ci-tools/toolchains
+      VCPKG_OVERLAY_PORTS: ${{ github.workspace }}/${{ inputs.build_directory }}/extension-ci-tools/vcpkg_ports
+      VCPKG_OVERLAY_TRIPLETS: ${{ github.workspace }}/${{ inputs.build_directory }}/extension-ci-tools/toolchains
       USE_MERGED_VCPKG_MANIFEST: ${{ inputs.use_merged_vcpkg_manifest }}
       AWS_ACCESS_KEY_ID: ${{ secrets.VCPKG_CACHING_AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.VCPKG_CACHING_AWS_SECRET_ACCESS_KEY }}
@@ -576,7 +606,7 @@ jobs:
       - name: Checkout / Extension CI tools
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          path: extension-ci-tools
+          path: ${{ inputs.build_directory }}/extension-ci-tools
           ref: ${{ inputs.ci_tools_version }}
           repository: ${{ inputs.override_ci_tools_repository }}
 
@@ -589,13 +619,13 @@ jobs:
         if: ${{ inputs.set_caller_as_duckdb }}
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          path: duckdb
+          path: ${{ inputs.build_directory }}/duckdb
           fetch-tags: true
           fetch-depth: 0
 
       - name: Checkout / Prepare sources
         id: prepare_sources
-        run: python3 extension-ci-tools/scripts/ci_phase.py checkout
+        run: python3 "$CI_TOOLS_PATH/scripts/ci_phase.py" checkout
 
       - name: Setup / Go
         if: ${{ contains(format(';{0};', inputs.extra_toolchains), ';go;') }}
@@ -636,18 +666,18 @@ jobs:
           aws --version
 
       - name: Setup
-        run: python3 extension-ci-tools/scripts/ci_phase.py setup
+        run: python3 "$CI_TOOLS_PATH/scripts/ci_phase.py" setup
 
       - name: Build
-        run: python3 extension-ci-tools/scripts/ci_phase.py build
+        run: python3 "$CI_TOOLS_PATH/scripts/ci_phase.py" build
 
       - name: Test
         timeout-minutes: ${{ inputs.test_timeout_minutes }}
-        run: python3 extension-ci-tools/scripts/ci_phase.py test
+        run: python3 "$CI_TOOLS_PATH/scripts/ci_phase.py" test
 
       - name: Upload / Prepare artifacts
         id: artifacts
-        run: python3 extension-ci-tools/scripts/ci_phase.py upload
+        run: python3 "$CI_TOOLS_PATH/scripts/ci_phase.py" upload
 
       - name: Upload
         # Haybarn: retries the artifact control-plane registration, which
@@ -677,8 +707,8 @@ jobs:
     env:
       VCPKG_TARGET_TRIPLET: ${{ matrix.vcpkg_target_triplet }}
       VCPKG_HOST_TRIPLET: ${{ matrix.vcpkg_host_triplet }}
-      VCPKG_OVERLAY_PORTS: ${{ github.workspace }}/extension-ci-tools/vcpkg_ports
-      VCPKG_OVERLAY_TRIPLETS: ${{ github.workspace }}/extension-ci-tools/toolchains
+      VCPKG_OVERLAY_PORTS: ${{ github.workspace }}/${{ inputs.build_directory }}/extension-ci-tools/vcpkg_ports
+      VCPKG_OVERLAY_TRIPLETS: ${{ github.workspace }}/${{ inputs.build_directory }}/extension-ci-tools/toolchains
       USE_MERGED_VCPKG_MANIFEST: ${{ inputs.use_merged_vcpkg_manifest }}
       AWS_ACCESS_KEY_ID: ${{ secrets.VCPKG_CACHING_AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.VCPKG_CACHING_AWS_SECRET_ACCESS_KEY }}
@@ -715,7 +745,7 @@ jobs:
       - name: Checkout / Extension CI tools
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          path: extension-ci-tools
+          path: ${{ inputs.build_directory }}/extension-ci-tools
           ref: ${{ inputs.ci_tools_version }}
           repository: ${{ inputs.override_ci_tools_repository }}
 
@@ -727,13 +757,13 @@ jobs:
         if: ${{ inputs.set_caller_as_duckdb }}
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          path: duckdb
+          path: ${{ inputs.build_directory }}/duckdb
           fetch-tags: true
           fetch-depth: 0
 
       - name: Checkout / Prepare sources
         id: prepare_sources
-        run: python extension-ci-tools/scripts/ci_phase.py checkout
+        run: python "$env:CI_TOOLS_PATH/scripts/ci_phase.py" checkout
 
       - name: Setup / Rust
         if: ${{ inputs.enable_rust || contains(format(';{0};', inputs.extra_toolchains), ';rust;') }}
@@ -809,18 +839,18 @@ jobs:
           vcpkgDirectory: ${{ env.VCPKG_WINDOWS_ROOT }}
 
       - name: Setup
-        run: python extension-ci-tools/scripts/ci_phase.py setup
+        run: python "$env:CI_TOOLS_PATH/scripts/ci_phase.py" setup
 
       - name: Build
-        run: python extension-ci-tools/scripts/ci_phase.py build
+        run: python "$env:CI_TOOLS_PATH/scripts/ci_phase.py" build
 
       - name: Test
         timeout-minutes: ${{ inputs.test_timeout_minutes }}
-        run: python extension-ci-tools/scripts/ci_phase.py test
+        run: python "$env:CI_TOOLS_PATH/scripts/ci_phase.py" test
 
       - name: Upload / Prepare artifacts
         id: artifacts
-        run: python extension-ci-tools/scripts/ci_phase.py upload
+        run: python "$env:CI_TOOLS_PATH/scripts/ci_phase.py" upload
 
       - name: Upload
         # Haybarn: retries the artifact control-plane registration, which
@@ -864,7 +894,10 @@ jobs:
       VCPKG_TARGET_TRIPLET: ${{ matrix.vcpkg_target_triplet }}
       VCPKG_HOST_TRIPLET: ${{ matrix.vcpkg_host_triplet }}
       # Haybarn: VCPKG_TOOLCHAIN_PATH / VCPKG_OVERLAY_* are set by "Setup / Container paths":
-      # github.workspace is the host path in a container job.
+      # github.workspace is the host path in a container job. For the same reason the
+      # workflow-level CI_TOOLS_PATH (built from github.workspace) is replaced by a path
+      # relative to the workspace, which steps run in.
+      CI_TOOLS_PATH: ${{ inputs.build_directory }}/extension-ci-tools
       USE_MERGED_VCPKG_MANIFEST: ${{ inputs.use_merged_vcpkg_manifest }}
       AWS_ACCESS_KEY_ID: ${{ secrets.VCPKG_CACHING_AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.VCPKG_CACHING_AWS_SECRET_ACCESS_KEY }}
@@ -896,7 +929,7 @@ jobs:
       - name: Checkout / Extension CI tools
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          path: extension-ci-tools
+          path: ${{ inputs.build_directory }}/extension-ci-tools
           ref: ${{ inputs.ci_tools_version }}
           repository: ${{ inputs.override_ci_tools_repository }}
 
@@ -908,21 +941,21 @@ jobs:
         if: ${{ inputs.set_caller_as_duckdb }}
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          path: duckdb
+          path: ${{ inputs.build_directory }}/duckdb
           fetch-tags: true
           fetch-depth: 0
 
       - name: Checkout / Prepare sources
         id: prepare_sources
-        run: python3 extension-ci-tools/scripts/ci_phase.py checkout
+        run: python3 "$CI_TOOLS_PATH/scripts/ci_phase.py" checkout
 
       - name: Setup / Container paths
         shell: bash
         run: |
           {
             echo "VCPKG_TOOLCHAIN_PATH=$GITHUB_WORKSPACE/vcpkg/scripts/buildsystems/vcpkg.cmake"
-            echo "VCPKG_OVERLAY_PORTS=$GITHUB_WORKSPACE/extension-ci-tools/vcpkg_ports"
-            echo "VCPKG_OVERLAY_TRIPLETS=$GITHUB_WORKSPACE/extension-ci-tools/toolchains"
+            echo "VCPKG_OVERLAY_PORTS=$GITHUB_WORKSPACE/${CI_BUILD_DIRECTORY:-.}/extension-ci-tools/vcpkg_ports"
+            echo "VCPKG_OVERLAY_TRIPLETS=$GITHUB_WORKSPACE/${CI_BUILD_DIRECTORY:-.}/extension-ci-tools/toolchains"
           } >> "$GITHUB_ENV"
 
       # Haybarn: actions/cache rather than ccache-action, which would install apt's ccache and
@@ -993,10 +1026,10 @@ jobs:
           go-version: '1.23'
 
       - name: Setup
-        run: python3 extension-ci-tools/scripts/ci_phase.py setup
+        run: python3 "$CI_TOOLS_PATH/scripts/ci_phase.py" setup
 
       - name: Build
-        run: python3 extension-ci-tools/scripts/ci_phase.py build
+        run: python3 "$CI_TOOLS_PATH/scripts/ci_phase.py" build
 
       - name: Ccache stats
         if: ${{ !cancelled() }}
@@ -1014,11 +1047,11 @@ jobs:
 
       - name: Test
         timeout-minutes: ${{ inputs.test_timeout_minutes }}
-        run: python3 extension-ci-tools/scripts/ci_phase.py test
+        run: python3 "$CI_TOOLS_PATH/scripts/ci_phase.py" test
 
       - name: Upload / Prepare artifacts
         id: artifacts
-        run: python3 extension-ci-tools/scripts/ci_phase.py upload
+        run: python3 "$CI_TOOLS_PATH/scripts/ci_phase.py" upload
 
       - name: Upload
         # Haybarn: retries the artifact control-plane registration, which

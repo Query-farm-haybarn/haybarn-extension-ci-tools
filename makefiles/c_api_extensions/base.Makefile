@@ -2,11 +2,12 @@
 #
 # Inputs
 #   EXTENSION_NAME         : name of the extension (lower case)
+#   CAPI_VERSION           : C API version (default 1; version 2 adds _v2 to the Wasm entrypoint)
 #   TARGET_DUCKDB_VERSION  : the target version of DuckDB that the extension targets
 # 	USE_UNSTABLE_C_API     : if set to 1, will allow usage of the unstable C API. (This pins the produced binaries to the exact DuckDB version)
 #   EXTENSION_VERSION      : the version of the extension, if left blank it will be autodetected
 #   DUCKDB_PLATFORM        : the platform of the extension, if left blank it will be autodetected
-#   DUCKDB_TEST_VERSION    : the version of DuckDB to test with, if left blank will default to latest stable on PyPi
+#   DUCKDB_TEST_VERSION    : test runtime (default: TARGET_DUCKDB_VERSION for unstable API, latest stable otherwise)
 #   LINUX_CI_IN_DOCKER     : indicates that the build is being run in/out of Docker in the linux CI
 #   SKIP_TESTS             : makes the test targets turn into NOPs
 
@@ -107,6 +108,11 @@ TEST_RUNNER=$(PYTHON_VENV_BIN) -m duckdb_sqllogictest
 TEST_RUNNER_BASE=$(TEST_RUNNER) --test-dir test/sql $(EXTRA_EXTENSIONS_PARAM)
 TEST_RUNNER_DEBUG=$(TEST_RUNNER_BASE) --external-extension build/debug/$(EXTENSION_NAME).duckdb_extension
 TEST_RUNNER_RELEASE=$(TEST_RUNNER_BASE) --external-extension build/release/$(EXTENSION_NAME).duckdb_extension
+
+# Unstable API extensions require the exact target runtime.
+ifeq ($(USE_UNSTABLE_C_API),1)
+	DUCKDB_TEST_VERSION?=$(TARGET_DUCKDB_VERSION)
+endif
 
 # Haybarn: test against the Haybarn engine (the `haybarn` package on PyPI), not
 # upstream duckdb, whose library_version only happens to match. `haybarn` ships
@@ -220,6 +226,12 @@ output_distribution_matrix:
 #############################################
 ### Linking
 #############################################
+CAPI_VERSION?=1
+CAPI_ENTRYPOINT_SUFFIX=
+ifeq ($(CAPI_VERSION),2)
+	CAPI_ENTRYPOINT_SUFFIX=_v2
+endif
+
 ifneq ($(DUCKDB_WASM_PLATFORM),)
 
 # The wasm_threads engine imports a *shared* env.memory, so its side-module
@@ -233,14 +245,14 @@ WASM_LINK_THREAD_FLAGS=
 endif
 
 link_wasm_debug:
-	emcc $(EXTENSION_BUILD_PATH)/debug/$(EXTENSION_LIB_FILENAME) -o $(EXTENSION_BUILD_PATH)/debug/$(EXTENSION_FILENAME_NO_METADATA) -O3 -g -sSIDE_MODULE=2 -sEXPORTED_FUNCTIONS="_$(EXTENSION_NAME)_init_c_api" $(WASM_LINK_THREAD_FLAGS)
+	emcc $(EXTENSION_BUILD_PATH)/debug/$(EXTENSION_LIB_FILENAME) -o $(EXTENSION_BUILD_PATH)/debug/$(EXTENSION_FILENAME_NO_METADATA) -O3 -g -sSIDE_MODULE=2 -sEXPORTED_FUNCTIONS="_$(EXTENSION_NAME)_init_c_api$(CAPI_ENTRYPOINT_SUFFIX)" $(WASM_LINK_THREAD_FLAGS)
 
 link_wasm_release:
 	# -g2 keeps the wasm "name" section so trap/exception stack traces show
 	# (mangled) function names instead of wasm-function[N]. Metadata only,
 	# independent of -O3; demangle with llvm-cxxfilt / rustfilt. Matches the
 	# engine-side flag in haybarn-wasm lib/CMakeLists.txt.
-	emcc $(EXTENSION_BUILD_PATH)/release/$(EXTENSION_LIB_FILENAME) -o $(EXTENSION_BUILD_PATH)/release/$(EXTENSION_FILENAME_NO_METADATA) -O3 -g2 -sSIDE_MODULE=2 -sEXPORTED_FUNCTIONS="_$(EXTENSION_NAME)_init_c_api" $(WASM_LINK_THREAD_FLAGS)
+	emcc $(EXTENSION_BUILD_PATH)/release/$(EXTENSION_LIB_FILENAME) -o $(EXTENSION_BUILD_PATH)/release/$(EXTENSION_FILENAME_NO_METADATA) -O3 -g2 -sSIDE_MODULE=2 -sEXPORTED_FUNCTIONS="_$(EXTENSION_NAME)_init_c_api$(CAPI_ENTRYPOINT_SUFFIX)" $(WASM_LINK_THREAD_FLAGS)
 
 else
 link_wasm_debug:

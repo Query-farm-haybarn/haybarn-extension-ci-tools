@@ -30,6 +30,8 @@ TRUE_VALUES = {"1", "true", "yes", "on"}
 # DuckDB's staging archives are built from different sources with a different
 # trust root, so they must never be linked into a Haybarn extension.
 DEFAULT_PREBUILT_DUCKDB_BASE_URL = "https://haybarn-extensions.query.farm/staging"
+# Haybarn: tags and versions are resolved against the Haybarn engine, not DuckDB
+DEFAULT_DUCKDB_REPOSITORY = "https://github.com/Query-farm-haybarn/haybarn.git"
 PREBUILT_DUCKDB_ARTIFACTS = {
     "linux_amd64": "duckdb-static-libs-linux-amd64.tar.gz",
     "linux_arm64": "duckdb-static-libs-linux-arm64.tar.gz",
@@ -76,7 +78,15 @@ ENGINE_SUBMODULE_NAMES = ("duckdb", "extension-ci-tools")
 # Haybarn engine release tags: haybarn-vX.Y.Z or haybarn-vX.Y.Z-rcN.
 HAYBARN_ENGINE_TAG_PATTERN = re.compile(r"^haybarn-(v[0-9]+\.[0-9]+\.[0-9]+)(-rc[0-9]+)?$")
 STAGED_DUCKDB_VERSION_PATTERN = re.compile(
-    r"^v[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|rc|dev)[0-9]+)?$"
+    r"^v([0-9]+)\.([0-9]+)\.([0-9]+)(?:-(alpha|rc|dev)([0-9]+))?$"
+)
+DUCKDB_VERSION_STAGE_RANK = {"dev": 0, "alpha": 1, "rc": 2, None: 3}
+SIRIUS_CUDA_EXTENSION_PATTERN = re.compile(r"sirius_cuda[0-9]+")
+SIRIUS_CUDA_VCPKG_OVERRIDES_JQ = (
+    '.overrides = (((.overrides // []) | '
+    'map(select(.name != "openssl" and .name != "dlpack" and .name != "flatbuffers"))) + '
+    '[{"name": "dlpack", "version": "0.8"}, '
+    '{"name": "flatbuffers", "version": "24.3.25"}])'
 )
 
 # Intel Homebrew is deprecated; keep this installer pin only while osx_amd64 is
@@ -123,6 +133,126 @@ def prebuilt_duckdb_artifact_name(architecture: str) -> str:
     return PREBUILT_DUCKDB_ARTIFACTS.get(architecture, "")
 
 
+def open_prebuilt_url(url: str):
+    request = urllib.request.Request(
+        url, headers={"User-Agent": PREBUILT_DUCKDB_USER_AGENT}
+    )
+    return urllib.request.urlopen(request, timeout=60)
+
+
+def staged_duckdb_version(
+    duckdb_commit: str,
+    base_url: str = DEFAULT_PREBUILT_DUCKDB_BASE_URL,
+    open_url=None,
+) -> str:
+    if re.fullmatch(r"[a-f0-9]{10,64}", duckdb_commit) is None:
+        raise ValueError(f"invalid DuckDB commit: {duckdb_commit}")
+
+    open_url = open_url or open_prebuilt_url
+    version_url = (
+        f"{base_url.rstrip('/')}/{duckdb_commit[:10]}/latest_alpha_version.txt"
+    )
+    with open_url(version_url) as response:
+        version = response.read().decode("utf-8").strip()
+    if STAGED_DUCKDB_VERSION_PATTERN.fullmatch(version) is None:
+        raise ValueError(
+            f"invalid staged DuckDB version for {duckdb_commit}: {version!r}"
+        )
+    return version
+
+
+def tags_at_commit(remote_tags: str, duckdb_commit: str) -> list[str]:
+    tags: set[str] = set()
+    for line in remote_tags.splitlines():
+        fields = line.split(maxsplit=1)
+        if len(fields) != 2 or fields[0] != duckdb_commit:
+            continue
+        ref = fields[1]
+        if not ref.startswith("refs/tags/"):
+            continue
+        tag = ref.removeprefix("refs/tags/").removesuffix("^{}")
+        tags.add(tag)
+    return sorted(tags)
+
+
+def fetch_duckdb_tags(
+    duckdb_repository: str,
+    duckdb_commit: str,
+) -> list[str]:
+    repository = duckdb_repository or DEFAULT_DUCKDB_REPOSITORY
+    if "://" not in repository and not repository.startswith("git@"):
+        repository = f"https://github.com/{repository.removesuffix('.git')}.git"
+    remote_tags = subprocess.run(
+        ["git", "ls-remote", "--tags", repository],
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    ).stdout
+    return tags_at_commit(remote_tags, duckdb_commit)
+
+
+def resolve_duckdb_version(
+    duckdb_version: str,
+    duckdb_commit: str,
+    duckdb_tags: Sequence[str] = (),
+    base_url: str = DEFAULT_PREBUILT_DUCKDB_BASE_URL,
+    open_url=None,
+) -> str:
+    if duckdb_version:
+        return duckdb_version
+
+    fallback = duckdb_commit
+    version_tag = highest_duckdb_version_tag(duckdb_tags)
+    if version_tag:
+        print(f"Selected DuckDB version tag: {version_tag}", flush=True)
+        return version_tag
+    if re.fullmatch(r"[a-f0-9]{10,64}", duckdb_commit) is None:
+        return fallback
+
+    open_url = open_url or open_prebuilt_url
+    try:
+        return staged_duckdb_version(duckdb_commit, base_url, open_url)
+    except (OSError, urllib.error.URLError) as error:
+        print(
+            f"Could not resolve staged DuckDB version for {duckdb_commit}; "
+            f"using {fallback}: {error}",
+            flush=True,
+        )
+        return fallback
+
+
+def duckdb_release_line(duckdb_version: str) -> str:
+    match = STAGED_DUCKDB_VERSION_PATTERN.fullmatch(duckdb_version)
+    if match is None:
+        return "unversioned"
+    major, minor, _, _, _ = match.groups()
+    return f"{major}.{minor}"
+
+
+def highest_duckdb_version_tag(tags: Sequence[str]) -> str:
+    versions: list[tuple[tuple[int, int, int, int, int], str]] = []
+    for tag in tags:
+        match = STAGED_DUCKDB_VERSION_PATTERN.fullmatch(tag)
+        if match is None:
+            continue
+        major, minor, patch, stage, stage_number = match.groups()
+        versions.append(
+            (
+                (
+                    int(major),
+                    int(minor),
+                    int(patch),
+                    DUCKDB_VERSION_STAGE_RANK[stage],
+                    int(stage_number or 0),
+                ),
+                tag,
+            )
+        )
+    if not versions:
+        return ""
+    return max(versions)[1]
+
+
 def test_environment(config: str) -> dict[str, str]:
     parsed = json.loads(config or "{}")
     values = parsed.get("test_env_variables", {})
@@ -153,7 +283,21 @@ class PhaseRunner:
         self.env = dict(os.environ if environ is None else environ)
         self.platform = self.required("CI_PLATFORM")
         self.architecture = self.required("DUCKDB_PLATFORM")
-        self.workspace = Path(self.env.get("GITHUB_WORKSPACE", ".")).resolve()
+        self.repository_root = Path(self.env.get("GITHUB_WORKSPACE", ".")).resolve()
+        build_directory = Path(self.value("CI_BUILD_DIRECTORY", "."))
+        if build_directory.is_absolute():
+            raise ValueError("CI_BUILD_DIRECTORY must be relative to GITHUB_WORKSPACE")
+        self.workspace = (self.repository_root / build_directory).resolve()
+        try:
+            self.workspace.relative_to(self.repository_root)
+        except ValueError as error:
+            raise ValueError(
+                "CI_BUILD_DIRECTORY must stay within GITHUB_WORKSPACE"
+            ) from error
+        if not self.workspace.is_dir():
+            raise ValueError(
+                f"CI_BUILD_DIRECTORY does not exist: {build_directory}"
+            )
         # Haybarn: container path of sccache once create_docker_environment set it up.
         self.docker_sccache = ""
         # Haybarn: derive the embedded engine version and the test-time
@@ -307,13 +451,36 @@ class PhaseRunner:
                 # from upstream DuckDB, and `checkout <tag>` fails there.
                 self.run(["git", "-C", "duckdb", "checkout", "--detach", "FETCH_HEAD"])
 
-        duckdb_version = self.value("DUCKDB_VERSION") or self.value(
-            "DUCKDB_COMMIT"
-        )
+        duckdb_version = self.value("DUCKDB_VERSION")
         if not duckdb_version:
-            duckdb_version = self.capture(
-                ["git", "-C", "duckdb", "rev-parse", "HEAD"]
+            self.run(["git", "-C", "duckdb", "fetch", "origin", "--tags", "--force"])
+            tags = sorted(
+                filter(
+                    None,
+                    self.capture(
+                        ["git", "-C", "duckdb", "tag", "--points-at", "HEAD"]
+                    ).splitlines(),
+                )
             )
+            print(
+                "DuckDB tags pointing at HEAD: "
+                + (", ".join(tags) if tags else "(none)"),
+                flush=True,
+            )
+            duckdb_version = highest_duckdb_version_tag(tags)
+            if duckdb_version:
+                print(
+                    f"Selected DuckDB version tag: {duckdb_version}",
+                    flush=True,
+                )
+            else:
+                duckdb_version = self.capture(
+                    ["git", "-C", "duckdb", "rev-parse", "HEAD"]
+                )
+                print(
+                    f"No supported DuckDB version tag found; using commit: {duckdb_version}",
+                    flush=True,
+                )
             if not duckdb_version:
                 raise ValueError("could not resolve the DuckDB checkout version")
         self.set_environment("DUCKDB_VERSION", duckdb_version)
@@ -517,10 +684,7 @@ class PhaseRunner:
             print(f"Linked nested submodule {path} to the top-level {target.name} checkout", flush=True)
 
     def _open_prebuilt_url(self, url: str):
-        request = urllib.request.Request(
-            url, headers={"User-Agent": PREBUILT_DUCKDB_USER_AGENT}
-        )
-        return urllib.request.urlopen(request, timeout=60)
+        return open_prebuilt_url(url)
 
     def _prebuilt_cache_miss(self, url: str, error: Exception) -> None:
         print(
@@ -559,18 +723,16 @@ class PhaseRunner:
         base_url = self.value(
             "CI_PREBUILT_DUCKDB_BASE_URL", DEFAULT_PREBUILT_DUCKDB_BASE_URL
         ).rstrip("/")
-        version_url = f"{base_url}/{short_commit}/latest_alpha_version.txt"
-        try:
-            with self._open_prebuilt_url(version_url) as response:
-                staged_version = response.read().decode("utf-8").strip()
-        except (OSError, urllib.error.URLError) as error:
-            self._prebuilt_cache_miss(version_url, error)
-            return False
-
+        staged_version = self.value("DUCKDB_VERSION")
         if STAGED_DUCKDB_VERSION_PATTERN.fullmatch(staged_version) is None:
-            raise ValueError(
-                f"invalid staged DuckDB version for {duckdb_commit}: {staged_version!r}"
-            )
+            try:
+                staged_version = staged_duckdb_version(
+                    duckdb_commit, base_url, self._open_prebuilt_url
+                )
+            except (OSError, urllib.error.URLError) as error:
+                version_url = f"{base_url}/{short_commit}/latest_alpha_version.txt"
+                self._prebuilt_cache_miss(version_url, error)
+                return False
 
         artifact_url = (
             f"{base_url}/{short_commit}/{staged_version}/duckdb/duckdb/"
@@ -611,7 +773,7 @@ class PhaseRunner:
         self.set_environment("CI_PREBUILT_DUCKDB_PATH", str(artifact_root.resolve()))
         return True
 
-    def inject_extension_config(self) -> None:
+    def extension_config(self) -> str:
         config_parts: list[str] = []
         raw_paths = self.value("CI_EXTENSION_CONFIG_PATHS", "[]")
         paths = json.loads(raw_paths)
@@ -627,7 +789,25 @@ class PhaseRunner:
         inline_config = self.value("CI_EXTRA_EXTENSION_CONFIG")
         if inline_config:
             config_parts.append(inline_config.rstrip("\n"))
-        config = "\n\n".join(part for part in config_parts if part)
+        return "\n\n".join(part for part in config_parts if part)
+
+    def source_extensions(self) -> set[str]:
+        """Extensions the config builds from a local checkout; a prebuilt copy would silently replace them."""
+        parts = [self.extension_config()]
+        # the Makefile always includes the repo's own config, whatever the matrix lists
+        root_config = self.workspace / "extension_config.cmake"
+        if root_config.is_file():
+            parts.append(root_config.read_text(encoding="utf-8"))
+        config = re.sub(r"#[^\n]*", "", "\n".join(parts))
+        return {
+            name.lower()
+            for name in re.findall(
+                r"(?i:duckdb_extension_load)\s*\(\s*(\w+)[^)]*\bSOURCE_DIR\b", config
+            )
+        }
+
+    def inject_extension_config(self) -> None:
+        config = self.extension_config()
         if not config:
             return
         path = self.workspace / "extension_config.cmake"
@@ -662,12 +842,7 @@ class PhaseRunner:
             if docker:
                 self.run(
                     [
-                        "docker",
-                        "run",
-                        "--env-file=docker_env.txt",
-                        "-v",
-                        f"{self.workspace}:/duckdb_build_dir",
-                        f"duckdb/{self.architecture}",
+                        *self.docker_arguments(),
                         "vcpkg",
                         "install",
                         dependency,
@@ -834,7 +1009,7 @@ class PhaseRunner:
 
     def build_environment(self) -> dict[str, str]:
         is_rtools = self.architecture in {"windows_amd64_rtools", "windows_amd64_mingw"}
-        return {
+        environment = {
             "DUCKDB_VERSION": self.build_duckdb_version(),
             "DUCKDB_COMMIT": self.value("DUCKDB_COMMIT"),
             "DUCKDB_PLATFORM": self.architecture,
@@ -847,6 +1022,13 @@ class PhaseRunner:
             "DUCKDB_PREBUILT_LIBRARY": self.value("DUCKDB_PREBUILT_LIBRARY"),
             "DUCKDB_PREBUILT_EXTENSIONS": self.value("DUCKDB_PREBUILT_EXTENSIONS"),
         }
+        if self.enabled("CI_LINUX_NATIVE_CONTAINER") and self.value("CI_CUDA_VERSION"):
+            environment["VCPKG_CUDA_VERSION"] = self.value("CI_CUDA_VERSION")
+            architectures = self.value("CI_CUDA_ARCHS").strip()
+            if architectures:
+                environment["CUDAARCHS"] = architectures
+                environment["VCPKG_CUDA_ARCHITECTURES"] = architectures
+        return environment
 
     def prepare_prebuilt_duckdb(self) -> None:
         artifact_name = self.value("CI_PREBUILT_DUCKDB_ARTIFACT")
@@ -938,24 +1120,33 @@ class PhaseRunner:
 
         destination = artifact_root / "extracted" / library_name
         self.set_environment("DUCKDB_PREBUILT_LIBRARY", str(destination.resolve()))
+        prebuilt_extensions = set(extension_names) - self.source_extensions()
         self.set_environment(
-            "DUCKDB_PREBUILT_EXTENSIONS", ";".join(sorted(extension_names))
+            "DUCKDB_PREBUILT_EXTENSIONS", ";".join(sorted(prebuilt_extensions))
         )
 
+    def docker_workspace(self) -> str:
+        build_directory = self.workspace.relative_to(self.repository_root)
+        return str(PurePosixPath("/duckdb_build_dir") / build_directory.as_posix())
+
+    def docker_path(self, path: str) -> str:
+        return str(PurePosixPath(self.docker_workspace()) / PurePosixPath(path))
+
     def docker_arguments(self) -> list[str]:
-        return [
+        arguments = [
             "docker",
             "run",
             "--env-file=docker_env.txt",
             "-v",
-            f"{self.workspace}:/duckdb_build_dir",
+            f"{self.repository_root}:/duckdb_build_dir",
             "-v",
             f"{self.workspace / '.ccache'}:/ccache_dir",
-            # Haybarn: explicit, since the prebuilt images use other WORKDIRs.
-            "-w",
-            "/duckdb_build_dir",
-            f"duckdb/{self.architecture}",
         ]
+        # Haybarn: always explicit, since the prebuilt images use other WORKDIRs (and an
+        # extension built from a subdirectory works there)
+        arguments.extend(["--workdir", self.docker_workspace()])
+        arguments.append(f"duckdb/{self.architecture}")
+        return arguments
 
     def install_sccache(self) -> str:
         """Download sccache into the workspace; return its container path, or "" if unavailable."""
@@ -1017,13 +1208,21 @@ class PhaseRunner:
             "AWS_REQUEST_CHECKSUM_CALCULATION": "when_required",
             "VCPKG_TARGET_TRIPLET": self.value("VCPKG_TARGET_TRIPLET"),
             "VCPKG_HOST_TRIPLET": self.value("VCPKG_HOST_TRIPLET"),
-            "VCPKG_OVERLAY_TRIPLETS": f"/duckdb_build_dir/{self.value('CI_VCPKG_OVERLAY_TRIPLETS')}",
-            "VCPKG_OVERLAY_PORTS": f"/duckdb_build_dir/{self.value('CI_VCPKG_OVERLAY_PORTS')}",
+            "VCPKG_OVERLAY_TRIPLETS": self.docker_path(
+                self.value("CI_VCPKG_OVERLAY_TRIPLETS")
+            ),
+            "VCPKG_OVERLAY_PORTS": self.docker_path(
+                self.value("CI_VCPKG_OVERLAY_PORTS")
+            ),
             "CUDAARCHS": self.value("CI_CUDA_ARCHS"),
             "VCPKG_CUDA_VERSION": self.value("CI_CUDA_VERSION"),
             "BUILD_SHELL": "1" if self.enabled("CI_BUILD_DUCKDB_SHELL") else "0",
-            "OPENSSL_ROOT_DIR": f"/duckdb_build_dir/build/{self.value('CI_BUILD_TYPE')}/vcpkg_installed/{self.value('VCPKG_TARGET_TRIPLET')}",
-            "OPENSSL_DIR": f"/duckdb_build_dir/build/{self.value('CI_BUILD_TYPE')}/vcpkg_installed/{self.value('VCPKG_TARGET_TRIPLET')}",
+            "OPENSSL_ROOT_DIR": self.docker_path(
+                f"build/{self.value('CI_BUILD_TYPE')}/vcpkg_installed/{self.value('VCPKG_TARGET_TRIPLET')}"
+            ),
+            "OPENSSL_DIR": self.docker_path(
+                f"build/{self.value('CI_BUILD_TYPE')}/vcpkg_installed/{self.value('VCPKG_TARGET_TRIPLET')}"
+            ),
             "OPENSSL_USE_STATIC_LIBS": "true",
             "DUCKDB_VERSION": self.build_duckdb_version(),
             "DUCKDB_COMMIT": self.value("DUCKDB_COMMIT"),
@@ -1081,7 +1280,9 @@ class PhaseRunner:
             relative_library = Path(prebuilt_library).resolve().relative_to(
                 self.workspace
             )
-            values["DUCKDB_PREBUILT_LIBRARY"] = f"/duckdb_build_dir/{relative_library.as_posix()}"
+            values["DUCKDB_PREBUILT_LIBRARY"] = self.docker_path(
+                relative_library.as_posix()
+            )
         with (self.workspace / "docker_env.txt").open("w", encoding="utf-8") as handle:
             for key, value in values.items():
                 value = value.rstrip("\r\n")
@@ -1112,11 +1313,49 @@ class PhaseRunner:
         registry = self.value("CI_LINUX_IMAGE_REGISTRY", HAYBARN_IMAGE_REGISTRY).rstrip("/")
         return f"{registry}/{distro}_{host}_{variant}:{version}"
 
+    def patch_sirius_cuda_vcpkg_manifest(
+        self,
+        command_prefix: Sequence[str] = (),
+        *,
+        extra_env: Mapping[str, str] | None = None,
+    ) -> bool:
+        extension = self.required("CI_EXTENSION_NAME")
+        if (
+            SIRIUS_CUDA_EXTENSION_PATTERN.fullmatch(extension) is None
+            or not self.enabled("USE_MERGED_VCPKG_MANIFEST")
+        ):
+            return False
+
+        manifest = "build/extension_configuration/vcpkg.json"
+        temporary = f"{manifest}.tmp"
+        self.run_with_retry(
+            [*command_prefix, "make", "extension_configuration"],
+            extra_env=extra_env,
+        )
+        self.run(
+            [
+                *command_prefix,
+                "sh",
+                "-c",
+                f"jq {shlex.quote(SIRIUS_CUDA_VCPKG_OVERRIDES_JQ)} {manifest} > {temporary}",
+            ],
+            extra_env=extra_env,
+        )
+        self.run([*command_prefix, "mv", temporary, manifest], extra_env=extra_env)
+        return True
+
     def build_linux(self) -> None:
         if self.enabled("CI_LINUX_NATIVE_CONTAINER"):
+            environment = self.build_environment()
+            manifest_patched = self.patch_sirius_cuda_vcpkg_manifest(
+                extra_env=environment
+            )
+            build_command = ["make", self.required("CI_BUILD_TYPE")]
+            if manifest_patched:
+                build_command.append("EXTENSION_CONFIG_STEP=")
             self.run_with_retry(
-                ["make", self.required("CI_BUILD_TYPE")],
-                extra_env=self.build_environment(),
+                build_command,
+                extra_env=environment,
             )
             return
         image = self.prebuilt_linux_image()
@@ -1130,7 +1369,10 @@ class PhaseRunner:
         self.install_extra_vcpkg_dependencies(docker=True)
         docker = self.docker_arguments()
         self.run_with_retry([*docker, "make", "configure_ci", *self.make_overrides()])
+        manifest_patched = self.patch_sirius_cuda_vcpkg_manifest(docker)
         build = ["make", self.required("CI_BUILD_TYPE")]
+        if manifest_patched:
+            build.append("EXTENSION_CONFIG_STEP=")
         if self.docker_sccache:
             # Haybarn: the sccache server lives only as long as this container, so
             # print its hit rate from the same container, after the build.
@@ -1481,6 +1723,7 @@ def main() -> None:
     parser.add_argument(
         "phase",
         choices=(
+            "resolve-version",
             "checkout",
             "setup",
             "build",
@@ -1489,6 +1732,44 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+    if args.phase == "resolve-version":
+        duckdb_version = os.environ.get("DUCKDB_VERSION", "")
+        duckdb_commit = os.environ.get("DUCKDB_COMMIT", "")
+        duckdb_tags: list[str] = []
+        if not duckdb_version:
+            duckdb_repository = os.environ.get(
+                "CI_DUCKDB_GIT_REPOSITORY", DEFAULT_DUCKDB_REPOSITORY
+            )
+            try:
+                duckdb_tags = fetch_duckdb_tags(duckdb_repository, duckdb_commit)
+            except (OSError, subprocess.CalledProcessError) as error:
+                print(
+                    f"Could not fetch DuckDB tags from {duckdb_repository}: {error}",
+                    flush=True,
+                )
+            print(
+                f"DuckDB tags pointing at {duckdb_commit}: "
+                + (", ".join(duckdb_tags) if duckdb_tags else "(none)"),
+                flush=True,
+            )
+        resolved = resolve_duckdb_version(
+            duckdb_version,
+            duckdb_commit,
+            duckdb_tags,
+            os.environ.get(
+                "CI_PREBUILT_DUCKDB_BASE_URL", DEFAULT_PREBUILT_DUCKDB_BASE_URL
+            ),
+        )
+        if not resolved:
+            raise ValueError("could not resolve the DuckDB version")
+        print(f"Resolved DuckDB version: {resolved}", flush=True)
+        output = os.environ.get("GITHUB_OUTPUT")
+        if output:
+            with Path(output).open("a", encoding="utf-8") as handle:
+                handle.write(f"version={resolved}\n")
+                handle.write(f"release_line={duckdb_release_line(resolved)}\n")
+        return
+
     runner = PhaseRunner()
     try:
         getattr(runner, args.phase)()

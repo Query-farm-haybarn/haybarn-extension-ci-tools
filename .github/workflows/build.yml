@@ -150,6 +150,9 @@ on:
       duckdb_commit:
         description: Resolved DuckDB commit used by the build
         value: ${{ jobs.matrix.outputs.duckdb_commit }}
+      duckdb_release_line:
+        description: Resolved DuckDB major/minor release line used by build caches
+        value: ${{ jobs.matrix.outputs.duckdb_release_line }}
 
 permissions:
   contents: read
@@ -187,7 +190,8 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runners).linux_slim || 'ubuntu-slim' }}
     outputs:
       duckdb_version: ${{ steps.duckdb-version.outputs.version }}
-      duckdb_commit: ${{ steps.duckdb-version.outputs.commit }}
+      duckdb_release_line: ${{ steps.duckdb-version.outputs.release_line }}
+      duckdb_commit: ${{ steps.duckdb-commit.outputs.commit }}
       build_linux: ${{ steps.matrix.outputs.build_linux }}
       test_linux: ${{ steps.matrix.outputs.test_linux }}
       build_macos: ${{ steps.matrix.outputs.build_macos }}
@@ -204,8 +208,8 @@ jobs:
           ref: ${{ inputs.extension_ref }}
           # Haybarn: only HEAD's duckdb gitlink is read below.
           fetch-depth: 1
-      - name: Resolve DuckDB version
-        id: duckdb-version
+      - name: Resolve DuckDB commit
+        id: duckdb-commit
         shell: bash
         env:
           INPUT_DUCKDB_VERSION: ${{ inputs.duckdb_version }}
@@ -213,16 +217,26 @@ jobs:
         run: |
           set -euo pipefail
           duckdb_commit="${INPUT_DUCKDB_COMMIT:-${INPUT_DUCKDB_VERSION}}"
-          duckdb_version="${INPUT_DUCKDB_VERSION:-${duckdb_commit}}"
           if [[ -z "${duckdb_commit}" ]]; then
             if ! duckdb_commit="$(git rev-parse HEAD:duckdb 2>/dev/null)"; then
               echo "duckdb_version or duckdb_commit is required when the extension repository has no duckdb submodule" >&2
               exit 1
             fi
-            duckdb_version="${duckdb_commit}"
           fi
-          echo "version=${duckdb_version}" >> "$GITHUB_OUTPUT"
           echo "commit=${duckdb_commit}" >> "$GITHUB_OUTPUT"
+      - name: Checkout extension-ci-tools
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          path: extension-ci-tools
+          repository: ${{ inputs.ci_tools_repository }}
+          ref: ${{ inputs.ci_tools_version }}
+      - name: Resolve DuckDB version
+        id: duckdb-version
+        env:
+          DUCKDB_VERSION: ${{ inputs.duckdb_version }}
+          DUCKDB_COMMIT: ${{ steps.duckdb-commit.outputs.commit }}
+          CI_DUCKDB_GIT_REPOSITORY: ${{ inputs.duckdb_repository }}
+        run: python3 extension-ci-tools/scripts/ci_phase.py resolve-version
       - name: Compute matrix
         id: matrix
         uses: Query-farm-haybarn/haybarn-ci/matrix@0440fc8d745a63300d10e53bb61ffd25f94fa1ca # haybarn
@@ -254,6 +268,8 @@ jobs:
       DUCKDB_COMMIT: ${{ needs.matrix.outputs.duckdb_commit }}
       CI_PLATFORM: linux
       CI_LINUX_NATIVE_CONTAINER: true
+      CI_CUDA_VERSION: ${{ matrix.cuda_version }}
+      CI_CUDA_ARCHS: ${{ matrix.cuda_archs }}
       DUCKDB_PLATFORM: ${{ matrix.duckdb_arch }}
       CI_EXTENSION_NAME: ${{ matrix.artifact_prefix }}
       CI_ARTIFACT_NAME: ${{ matrix.artifact_name }}
@@ -297,16 +313,17 @@ jobs:
         with:
           max-size: 5GB
           evict-old-files: job
-          key: build-${{ matrix.artifact_name }}-${{ needs.matrix.outputs.duckdb_version }}
-          restore-keys: |
-            ccache-build-${{ matrix.artifact_name }}-${{ needs.matrix.outputs.duckdb_version }}
-            build-${{ matrix.artifact_name }}-
-            ccache-build-${{ matrix.artifact_name }}-
+          key: duckdb-${{ needs.matrix.outputs.duckdb_release_line }}-${{ matrix.artifact_name }}
+          restore-keys: duckdb-${{ needs.matrix.outputs.duckdb_release_line }}-${{ matrix.artifact_name }}
           save: ${{ inputs.save_cache }}
       - name: Setup cache clients
         uses: ./extension-ci-tools/.github/actions/cache-clients
         with:
           rust: ${{ matrix.toolchain == 'rust' }}
+      # Sirius scan verification requires exported host symbols.
+      - name: Configure Sirius host exports
+        if: ${{ matrix.cuda_version != '' }}
+        run: echo "EXT_FLAGS=${EXT_FLAGS:-} -DEXPORT_DYNAMIC_SYMBOLS=ON" >> "$GITHUB_ENV"
       - name: Configure
         run: python3 extension-ci-tools/scripts/ci_phase.py setup
       - name: Build
@@ -392,11 +409,8 @@ jobs:
         with:
           max-size: 5GB
           evict-old-files: job
-          key: build-${{ matrix.artifact_name }}-${{ needs.matrix.outputs.duckdb_version }}
-          restore-keys: |
-            ccache-build-${{ matrix.artifact_name }}-${{ needs.matrix.outputs.duckdb_version }}
-            build-${{ matrix.artifact_name }}-
-            ccache-build-${{ matrix.artifact_name }}-
+          key: duckdb-${{ needs.matrix.outputs.duckdb_release_line }}-${{ matrix.artifact_name }}
+          restore-keys: duckdb-${{ needs.matrix.outputs.duckdb_release_line }}-${{ matrix.artifact_name }}
           save: ${{ inputs.save_cache }}
       - name: Setup cache clients
         uses: ./extension-ci-tools/.github/actions/cache-clients
@@ -497,11 +511,8 @@ jobs:
         with:
           max-size: 5GB
           evict-old-files: job
-          key: build-${{ matrix.artifact_name }}-${{ needs.matrix.outputs.duckdb_version }}
-          restore-keys: |
-            ccache-build-${{ matrix.artifact_name }}-${{ needs.matrix.outputs.duckdb_version }}
-            build-${{ matrix.artifact_name }}-
-            ccache-build-${{ matrix.artifact_name }}-
+          key: duckdb-${{ needs.matrix.outputs.duckdb_release_line }}-${{ matrix.artifact_name }}
+          restore-keys: duckdb-${{ needs.matrix.outputs.duckdb_release_line }}-${{ matrix.artifact_name }}
           save: ${{ inputs.save_cache }}
       - name: Setup Rtools
         if: ${{ matrix.duckdb_arch == 'windows_amd64_rtools' || matrix.duckdb_arch == 'windows_amd64_mingw' }}
@@ -585,6 +596,7 @@ jobs:
       CI_HAS_RUST: ${{ matrix.toolchain == 'rust' }}
       VCPKG_TARGET_TRIPLET: ${{ matrix.vcpkg_target_triplet }}
       VCPKG_HOST_TRIPLET: ${{ matrix.vcpkg_host_triplet }}
+      VCPKG_OVERLAY_TRIPLETS: ${{ github.workspace }}/extension-ci-tools/toolchains
       AWS_ACCESS_KEY_ID: ${{ secrets.VCPKG_CACHING_AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.VCPKG_CACHING_AWS_SECRET_ACCESS_KEY }}
       AWS_ENDPOINT_URL: ${{ secrets.VCPKG_CACHING_AWS_ENDPOINT_URL }}

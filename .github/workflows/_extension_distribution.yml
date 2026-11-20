@@ -461,6 +461,14 @@ jobs:
           ref: ${{ inputs.ci_tools_version }}
           repository: ${{ inputs.override_ci_tools_repository }}
 
+      # Haybarn: local actions and some steps use ./extension-ci-tools (expressions are not allowed in
+      # `uses:`), so an extension built from a subdirectory (build_directory) links it at the root.
+      - name: Setup / ci-tools at the workspace root
+        if: ${{ inputs.build_directory != '.' && inputs.build_directory != '' }}
+        shell: bash
+        run: ln -sfn "${{ inputs.build_directory }}/extension-ci-tools" extension-ci-tools || cp -R "${{ inputs.build_directory }}/extension-ci-tools" extension-ci-tools
+
+
       - name: Checkout / DuckDB from calling workflow
         if: ${{ inputs.set_caller_as_duckdb }}
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -610,6 +618,14 @@ jobs:
           ref: ${{ inputs.ci_tools_version }}
           repository: ${{ inputs.override_ci_tools_repository }}
 
+      # Haybarn: local actions and some steps use ./extension-ci-tools (expressions are not allowed in
+      # `uses:`), so an extension built from a subdirectory (build_directory) links it at the root.
+      - name: Setup / ci-tools at the workspace root
+        if: ${{ inputs.build_directory != '.' && inputs.build_directory != '' }}
+        shell: bash
+        run: ln -sfn "${{ inputs.build_directory }}/extension-ci-tools" extension-ci-tools || cp -R "${{ inputs.build_directory }}/extension-ci-tools" extension-ci-tools
+
+
       - name: Checkout / Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
@@ -748,6 +764,14 @@ jobs:
           path: ${{ inputs.build_directory }}/extension-ci-tools
           ref: ${{ inputs.ci_tools_version }}
           repository: ${{ inputs.override_ci_tools_repository }}
+
+      # Haybarn: local actions and some steps use ./extension-ci-tools (expressions are not allowed in
+      # `uses:`), so an extension built from a subdirectory (build_directory) links it at the root.
+      - name: Setup / ci-tools at the workspace root
+        if: ${{ inputs.build_directory != '.' && inputs.build_directory != '' }}
+        shell: bash
+        run: ln -sfn "${{ inputs.build_directory }}/extension-ci-tools" extension-ci-tools || cp -R "${{ inputs.build_directory }}/extension-ci-tools" extension-ci-tools
+
 
       - name: Checkout / Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
@@ -935,6 +959,14 @@ jobs:
           path: ${{ inputs.build_directory }}/extension-ci-tools
           ref: ${{ inputs.ci_tools_version }}
           repository: ${{ inputs.override_ci_tools_repository }}
+
+      # Haybarn: local actions and some steps use ./extension-ci-tools (expressions are not allowed in
+      # `uses:`), so an extension built from a subdirectory (build_directory) links it at the root.
+      - name: Setup / ci-tools at the workspace root
+        if: ${{ inputs.build_directory != '.' && inputs.build_directory != '' }}
+        shell: bash
+        run: ln -sfn "${{ inputs.build_directory }}/extension-ci-tools" extension-ci-tools || cp -R "${{ inputs.build_directory }}/extension-ci-tools" extension-ci-tools
+
 
       # Haybarn: no setup-python here. Its CPython comes from the host's tool cache (mounted at
       # /__t) and has no working ssl module in this image ("unknown url type: https" for any

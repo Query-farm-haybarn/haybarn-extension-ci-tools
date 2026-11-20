@@ -3,7 +3,7 @@
 # The 2.0 extension builds (build.yml) set up emscripten on the runner and use haybarn-ci images for Linux,
 # so of the 1.5 image set (haybarn branch, same file name) only the wasm images are still built from here:
 #
-#   ghcr.io/query-farm-haybarn/haybarn-wasm-base:<engine_version>   emsdk 6.0.13, vcpkg, ccache, sccache
+#   ghcr.io/query-farm-haybarn/haybarn-wasm-base:<engine_version>   emsdk 7.0.0, vcpkg, ccache, sccache
 #   ghcr.io/query-farm-haybarn/haybarn-wasm-rust:<engine_version>   + Rust 1.86.0 with wasm32-unknown-emscripten
 #
 # haybarn-wasm 2.0 builds its wasm bundles and runs its JS steps in haybarn-wasm-base, and build.yml /

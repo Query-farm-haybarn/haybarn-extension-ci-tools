@@ -890,7 +890,10 @@ jobs:
       # emcc invocation in the build, dependencies included. The -Wno flag keeps
       # compile-only calls quiet (emcc warns that the link setting is unused
       # there, which is fatal for dependencies that build with -Werror).
-      EMCC_CFLAGS: -sDEFAULT_TO_CXX -Wno-unused-command-line-argument
+      # Haybarn: emscripten 7.0.0 ships libc++ 23, which drops many transitive includes; extension and
+      # dependency sources that relied on them fail to compile. Keep them until those sources add the
+      # missing #includes (libc++'s documented temporary escape hatch).
+      EMCC_CFLAGS: -sDEFAULT_TO_CXX -Wno-unused-command-line-argument -D_LIBCPP_KEEP_TRANSITIVE_INCLUDES_LLVM23
       VCPKG_TARGET_TRIPLET: ${{ matrix.vcpkg_target_triplet }}
       VCPKG_HOST_TRIPLET: ${{ matrix.vcpkg_host_triplet }}
       # Haybarn: VCPKG_TOOLCHAIN_PATH / VCPKG_OVERLAY_* are set by "Setup / Container paths":

@@ -5,7 +5,7 @@ FROM ubuntu:24.04
 # as "originated from" the source repo for automatic-access purposes,
 # and downstream tooling (e.g. dependabot) can find provenance.
 LABEL org.opencontainers.image.source="https://github.com/Query-farm-haybarn/haybarn-extension-ci-tools"
-LABEL org.opencontainers.image.description="Haybarn 2.0 wasm build environment (emscripten 6.0.13 + vcpkg + ccache + sccache)"
+LABEL org.opencontainers.image.description="Haybarn 2.0 wasm build environment (emscripten 7.0.0 + vcpkg + ccache + sccache)"
 
 # Used three ways, so the emscripten version has one source of truth:
 #   * haybarn-wasm 2.0 builds its wasm bundles in this image (GitHub `container:` jobs) and
@@ -75,9 +75,9 @@ RUN arch="$(uname -m)" \
 # builds get a deterministic emcc location (the inline `setup-emsdk@v13`
 # path embeds a per-run UUID, which defeats ccache hashing — that was
 # the whole reason for this image existing).
-# 6.0.13 for the 2.0 line: the engine, haybarn-wasm 2.0 and build.yml's wasm job (setup-emsdk) use it, and
+# 7.0.0 for the 2.0 line: the engine, haybarn-wasm 2.0 and build.yml's wasm job (setup-emsdk) use it, and
 # a side module must come from the same emscripten as the main module that loads it.
-ARG EMSDK_VERSION=6.0.13
+ARG EMSDK_VERSION=7.0.0
 RUN git clone --depth 1 https://github.com/emscripten-core/emsdk.git /emsdk \
     && cd /emsdk \
     && ./emsdk install ${EMSDK_VERSION} \
@@ -95,7 +95,7 @@ RUN git clone --depth 1 https://github.com/emscripten-core/emsdk.git /emsdk \
 #
 # GitHub `container:` jobs run their steps with a plain (non-login) shell and HOME=/github/home, so
 # nothing from /etc/profile.d or /root applies there: everything a build needs is set with ENV.
-# /emsdk/node/current is a symlink to emsdk's bundled node (24.x for 6.0.13), whose versioned
+# /emsdk/node/current is a symlink to emsdk's bundled node (as bundled by the pinned emsdk), whose versioned
 # directory name changes with every emsdk release.
 ENV EMSDK=/emsdk
 ENV EMSDK_NODE=/emsdk/node/current/bin/node

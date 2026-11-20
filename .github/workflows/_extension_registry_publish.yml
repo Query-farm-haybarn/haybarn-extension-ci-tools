@@ -23,7 +23,8 @@
 # HAYBARN_NPM_TOKEN org secrets) — not Trusted Publishers OIDC, which
 # requires per-package registration that doesn't scale.
 #
-# publish_pypi and publish_npm are independent jobs — either can fail
+# publish_pypi and publish_npm are independent jobs, both off unless the
+# caller passes true for that input — either can fail
 # without blocking the other, so a PyPI 429 doesn't kill the npm side.
 #
 # Retry recipe (manual workflow_dispatch from the consuming repo, NOT
@@ -60,6 +61,15 @@ on:
         required: false
         type: string
         default: 'v1.5.2'
+      publish_npm:
+        # Off: Haybarn stopped publishing extensions to npm (2026-11-20). R2 is
+        # the extension channel. Package names embed the engine version, so every
+        # release creates new names, which trusted publishing cannot create; npm
+        # caps the token this needs at 90 days. Pass true to publish anyway.
+        description: 'Publish npm packages'
+        required: false
+        type: boolean
+        default: false
       # per-extension mode only — passed from the build's deploy job outputs:
       version:
         required: false
@@ -160,6 +170,7 @@ jobs:
   # ------------------------------------------------------------------
   publish_npm:
     name: Publish npm
+    if: ${{ inputs.publish_npm }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read

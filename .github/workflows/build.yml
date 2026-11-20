@@ -568,9 +568,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     # Haybarn: the wasm build image haybarn-wasm 2.0 builds its bundles in, so these side modules and
     # the main module that loads them share one emscripten (the image sets the version; the
-    # wasm-toolchain action checks it). Pinned by digest (haybarn-wasm-{base,rust}:v2.0.0-2), published by publish-build-images.yml.
+    # wasm-toolchain action checks it). Pinned by digest (haybarn-wasm-{base,rust}:v2.0.1-2, emscripten 7.0.0), published by publish-build-images.yml.
     container:
-      image: ${{ matrix.toolchain == 'rust' && 'ghcr.io/query-farm-haybarn/haybarn-wasm-rust@sha256:ae0fceaa9a18f7361230a8189283fadeffd03857694f959ff1a4b1b0d1bf0113' || 'ghcr.io/query-farm-haybarn/haybarn-wasm-base@sha256:3c841479b14f1337b4711952896066a98a41fed78615ebac9678d41bc98c7f5b' }}
+      image: ${{ matrix.toolchain == 'rust' && 'ghcr.io/query-farm-haybarn/haybarn-wasm-rust@sha256:64358f5db88b712830eff154304ddb90a4b335586f1ce2c4acdb6f926d133a36' || 'ghcr.io/query-farm-haybarn/haybarn-wasm-base@sha256:17721ea93ae66c01d7415faafdffd8e44f57b63584362c4edf607c6205f6448a' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.matrix.outputs.build_wasm) }}

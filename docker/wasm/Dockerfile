@@ -109,7 +109,8 @@ LABEL farm.query.haybarn.emscripten-version="${EMSDK_VERSION}"
 # emsdk ships its system-library cache prebuilt, but without the PIC variants. A main module
 # that loads extensions (-sMAIN_MODULE, haybarn-wasm's loadable bundles) links these, and emcc
 # would otherwise build them in every job (~30 s each, and not covered by ccache). Since emscripten 7.0.0 the
-# builtins have no sjlj variants: the emscripten-specific part moved to libemcc (-legacysjlj).
+# builtins have no sjlj variants: the emscripten-specific part moved to libemcc (-legacysjlj). crtbegin-mt too:
+# a container job that does not run as root cannot write it into /emsdk's cache at link time.
 RUN embuilder --pic build \
       libc libc-mt libdlmalloc libdlmalloc-mt \
       libc++-legacyexcept libc++-mt-legacyexcept \
@@ -117,7 +118,7 @@ RUN embuilder --pic build \
       libunwind-legacyexcept libunwind-mt-legacyexcept \
       libclang_rt.builtins libclang_rt.builtins-mt libemcc-legacysjlj libemcc-legacysjlj-mt \
       libembind-rtti libembind-mt-rtti libGL-getprocaddr libGL-mt-getprocaddr \
-      libal libhtml5 libstubs libnoexit libsockets libsockets-mt \
+      libal libhtml5 libstubs libnoexit libsockets libsockets-mt crtbegin-mt \
     && emcc --version | head -1 | grep -F "${EMSDK_VERSION}"
 
 # haybarn-wasm's build script post-processes the emscripten glue with js-beautify (the GitHub

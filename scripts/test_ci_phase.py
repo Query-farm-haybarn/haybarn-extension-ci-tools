@@ -332,6 +332,40 @@ class CIPhaseTest(unittest.TestCase):
             self.assertIn("RUSTC_WRAPPER=/duckdb_build_dir/.ci/sccache/sccache\n", docker_env)
             self.assertIn("CARGO_INCREMENTAL=0\n", docker_env)
 
+    def test_subdirectory_build_maps_sccache_and_ccache_helper_from_the_repository_root(self):
+        # sirius builds from sirius-duckdb/: sccache lands under the build directory, the
+        # cache-clients helper under $GITHUB_WORKSPACE, and the container mounts the root.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "sirius-duckdb").mkdir()
+            helper_dir = root / ".ci/cache-clients"
+            helper_dir.mkdir(parents=True)
+            (helper_dir / "ccache-storage-https").write_text("")
+            payload = io.BytesIO()
+            with tarfile.open(fileobj=payload, mode="w:gz") as bundle:
+                data = b"#!/bin/sh\n"
+                info = tarfile.TarInfo("sccache-v0.8.2-x86_64-unknown-linux-musl/sccache")
+                info.size = len(data)
+                bundle.addfile(info, io.BytesIO(data))
+            payload.seek(0)
+            env = self.environment(root)
+            env.update(
+                {
+                    "CI_BUILD_DIRECTORY": "sirius-duckdb",
+                    "CI_EXTRA_TOOLCHAINS": ";rust;",
+                    "SCCACHE_WEBDAV_TOKEN": "token",
+                    "CCACHE_REMOTE_STORAGE": "https://cache.example/ccache",
+                    "CCACHE_LIBEXEC_DIRS": str(helper_dir),
+                }
+            )
+            runner = RecordingRunner(env)
+            with mock.patch("ci_phase.urllib.request.urlopen", return_value=payload):
+                self.assertEqual(runner.install_sccache(), "/duckdb_build_dir/sirius-duckdb/.ci/sccache/sccache")
+            self.assertTrue((root / "sirius-duckdb/.ci/sccache/sccache").is_file())
+            self.assertEqual(
+                runner.docker_ccache_remote()["CCACHE_LIBEXEC_DIRS"], "/duckdb_build_dir/.ci/cache-clients"
+            )
+
     def test_sccache_is_skipped_without_rust_or_token(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)

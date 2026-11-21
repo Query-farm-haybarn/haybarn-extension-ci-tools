@@ -1174,7 +1174,9 @@ class PhaseRunner:
             print(f"sccache binary not found in {url}; building Rust without it.", flush=True)
             return ""
         (destination / "sccache").chmod(0o755)
-        return "/duckdb_build_dir/.ci/sccache/sccache"
+        # Haybarn: the container sees the repository root at /duckdb_build_dir, and
+        # destination sits under the build directory (a subdirectory for e.g. sirius).
+        return self.docker_path(".ci/sccache/sccache")
 
     def docker_ccache_remote(self) -> dict[str, str]:
         """CCACHE_REMOTE_STORAGE (and the https helper's directory) for the build container."""
@@ -1186,10 +1188,12 @@ class PhaseRunner:
         # compile without it, so map its directory into the container or drop the remote.
         helper_dir = self.value("CCACHE_LIBEXEC_DIRS")
         try:
-            relative = Path(helper_dir).resolve().relative_to(self.workspace.resolve()) if helper_dir else None
+            # Haybarn: relative to the repository root (mounted at /duckdb_build_dir); the
+            # cache-clients action installs under $GITHUB_WORKSPACE, not the build directory.
+            relative = Path(helper_dir).resolve().relative_to(self.repository_root) if helper_dir else None
         except ValueError:
             relative = None
-        if relative is None or not (self.workspace / relative / "ccache-storage-https").is_file():
+        if relative is None or not (self.repository_root / relative / "ccache-storage-https").is_file():
             print("ccache https storage helper not under the workspace; the build container uses only its local ccache.", flush=True)
             return {"CCACHE_REMOTE_STORAGE": ""}
         return {

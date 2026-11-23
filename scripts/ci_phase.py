@@ -1363,7 +1363,7 @@ class PhaseRunner:
             manifest_patched = self.patch_sirius_cuda_vcpkg_manifest(
                 extra_env=environment
             )
-            build_command = ["make", self.required("CI_BUILD_TYPE"), *self.make_overrides()]
+            build_command = ["make", self.required("CI_BUILD_TYPE")]
             if manifest_patched:
                 build_command.append("EXTENSION_CONFIG_STEP=")
             self.run_with_retry(
@@ -1383,7 +1383,7 @@ class PhaseRunner:
         docker = self.docker_arguments()
         self.run_with_retry([*docker, "make", "configure_ci", *self.make_overrides()])
         manifest_patched = self.patch_sirius_cuda_vcpkg_manifest(docker)
-        build = ["make", self.required("CI_BUILD_TYPE"), *self.make_overrides()]
+        build = ["make", self.required("CI_BUILD_TYPE")]
         if manifest_patched:
             build.append("EXTENSION_CONFIG_STEP=")
         if self.docker_sccache:
@@ -1422,10 +1422,7 @@ class PhaseRunner:
         )
 
     def build_macos(self) -> None:
-        self.run(
-            ["make", self.required("CI_BUILD_TYPE"), *self.make_overrides()],
-            extra_env=self.build_environment(),
-        )
+        self.run(["make", self.required("CI_BUILD_TYPE")], extra_env=self.build_environment())
 
     def build_windows(self) -> None:
         environment = self.build_environment()
@@ -1475,16 +1472,13 @@ class PhaseRunner:
                 extra_env=environment,
             )
         build_command = format_windows_command(
-            [*self.retry_prefix(), "make", self.required("CI_BUILD_TYPE"), *self.make_overrides()]
+            [*self.retry_prefix(), "make", self.required("CI_BUILD_TYPE")]
         )
         commands.append(build_command)
         self.run(" && ".join(commands), shell=True, extra_env=environment)
 
     def build_wasm(self) -> None:
-        self.run_with_retry(
-            ["make", self.architecture, *self.make_overrides()],
-            extra_env=self.build_environment(),
-        )
+        self.run_with_retry(["make", self.architecture], extra_env=self.build_environment())
 
     def build(self) -> None:
         prebuilt_source = self.value("CI_PREBUILT_DUCKDB_SOURCE")

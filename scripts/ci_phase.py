@@ -397,17 +397,8 @@ class PhaseRunner:
         # Haybarn: extension Makefiles assign DUCKDB_TEST_VERSION themselves
         # (some with a plain '='), so the test-time haybarn-cli version must be
         # a make command-line override to win.
-        overrides = []
-        # Haybarn: the engine's release version (vX.Y.Z) for C API extensions on the
-        # unstable API, which pin TARGET_DUCKDB_VERSION and only load on that exact
-        # engine. base.Makefile retargets them within the same major.minor.
-        engine_version = self.value("OVERRIDE_GIT_DESCRIBE")
-        if re.fullmatch(r"v\d+\.\d+\.\d+", engine_version):
-            overrides.append(f"HAYBARN_ENGINE_VERSION={engine_version}")
         test_version = self.value("DUCKDB_TEST_VERSION")
-        if test_version:
-            overrides.append(f"DUCKDB_TEST_VERSION={test_version}")
-        return overrides
+        return [f"DUCKDB_TEST_VERSION={test_version}"] if test_version else []
 
     def retry_prefix(self) -> list[str]:
         retry_script = self.workspace / "duckdb" / "scripts" / "ci" / "retry.py"

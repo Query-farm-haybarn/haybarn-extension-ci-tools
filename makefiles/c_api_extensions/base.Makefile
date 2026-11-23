@@ -49,20 +49,6 @@ ifeq ($(TARGET_DUCKDB_VERSION),)
 	TARGET_DUCKDB_VERSION = v0.0.1
 endif
 
-# Haybarn: unstable C API extensions load only on the exact TARGET_DUCKDB_VERSION.
-# ci_phase.py passes the engine being built as HAYBARN_ENGINE_VERSION (vX.Y.Z);
-# an extension targeting an earlier patch of the same major.minor (e.g. v2.0.0 on
-# a v2.0.1 engine) is retargeted to it, so the binary loads on the engine it is
-# published for. A different major.minor is left alone: the unstable API may differ.
-ifeq ($(USE_UNSTABLE_C_API),1)
-ifneq ($(HAYBARN_ENGINE_VERSION),)
-HAYBARN_MAJOR_MINOR = $(word 1,$(subst ., ,$(1))).$(word 2,$(subst ., ,$(1)))
-ifeq ($(call HAYBARN_MAJOR_MINOR,$(TARGET_DUCKDB_VERSION)),$(call HAYBARN_MAJOR_MINOR,$(HAYBARN_ENGINE_VERSION)))
-override TARGET_DUCKDB_VERSION := $(HAYBARN_ENGINE_VERSION)
-endif
-endif
-endif
-
 EXTENSION_FILENAME=$(EXTENSION_NAME).duckdb_extension
 EXTENSION_FILENAME_NO_METADATA=$(EXTENSION_LIB_FILENAME)
 

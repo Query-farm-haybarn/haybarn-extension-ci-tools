@@ -794,9 +794,7 @@ class CIPhaseTest(unittest.TestCase):
             runner = RecordingRunner(env)
             self.assertEqual(runner.env["OVERRIDE_GIT_DESCRIBE"], "v2.0.0")
             self.assertEqual(runner.env["DUCKDB_TEST_VERSION"], "2.0.0rc1")
-            self.assertEqual(
-                runner.make_overrides(), ["HAYBARN_ENGINE_VERSION=v2.0.0", "DUCKDB_TEST_VERSION=2.0.0rc1"]
-            )
+            self.assertEqual(runner.make_overrides(), ["DUCKDB_TEST_VERSION=2.0.0rc1"])
 
             runner.create_docker_environment()
             docker_environment = Path(directory, "docker_env.txt").read_text(encoding="utf-8")
